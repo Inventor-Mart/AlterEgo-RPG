@@ -22,9 +22,17 @@ import {
   RefreshCw,
   Maximize2,
   Minimize2,
+  Camera,
+  Upload,
 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEngine';
-import { getRealisticCharacterPhoto } from '../utils/characterAvatars';
+import {
+  getRealisticCharacterPhoto,
+  detectNameNationality,
+  compressImageFile,
+  setStoredCustomAvatar,
+  getStoredCustomAvatars,
+} from '../utils/characterAvatars';
 import {
   getDefaultRealisticSceneImage,
   CastMember,
@@ -53,6 +61,8 @@ interface StudioScriptPortraitViewProps {
   isBranchingChapter: boolean;
   onResetToLobby: () => void;
   playerColorStyles: { bg: string; text: string; border: string; badge: string }[];
+  customPlayerPhotos?: Record<string, string>;
+  onUpdateCustomPhoto?: (playerName: string, dataUrl: string) => void;
 }
 
 export function StudioScriptPortraitView({
@@ -76,6 +86,8 @@ export function StudioScriptPortraitView({
   isBranchingChapter,
   onResetToLobby,
   playerColorStyles,
+  customPlayerPhotos = {},
+  onUpdateCustomPhoto,
 }: StudioScriptPortraitViewProps) {
   // Mode toggle inside studio script: TikTok Live Teleprompter vs Full Screenplay Sheet
   const [viewSubMode, setViewSubMode] = useState<'tiktok' | 'screenplay'>('tiktok');
@@ -86,6 +98,16 @@ export function StudioScriptPortraitView({
   );
   const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<boolean>(false);
   const [characterPortraits, setCharacterPortraits] = useState<Record<string, string>>({});
+
+  // Local state for custom photos to ensure immediate re-rendering
+  const [localCustomPhotos, setLocalCustomPhotos] = useState<Record<string, string>>(() => ({
+    ...getStoredCustomAvatars(),
+    ...customPlayerPhotos,
+  }));
+
+  // Avatar Upload State
+  const [uploadTargetPlayer, setUploadTargetPlayer] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Audio & Playback Controls
   const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false);
@@ -100,7 +122,7 @@ export function StudioScriptPortraitView({
   const autoPlayTimerRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Generate realistic character portraits
+  // Generate realistic character portraits matching nationality and custom uploads
   const fetchCharacterPortraits = useCallback(() => {
     if (cast.length === 0) return;
     const newPortraits: Record<string, string> = {};
@@ -108,45 +130,45 @@ export function StudioScriptPortraitView({
       newPortraits[member.player.toLowerCase()] = getRealisticCharacterPhoto(
         member.player,
         member.role,
-        genre
+        genre,
+        localCustomPhotos
       );
     }
     setCharacterPortraits(newPortraits);
-  }, [cast, genre]);
+  }, [cast, genre, localCustomPhotos]);
 
-  // Load realistic scene photo & portraits on chapter change
+  // Load realistic scene photo & portraits on chapter change or photo update
   useEffect(() => {
     setSceneImageUrl(getDefaultRealisticSceneImage(genre, chapterNumber));
     fetchCharacterPortraits();
   }, [chapterNumber, genre, fetchCharacterPortraits]);
 
-  // Regenerate realistic scene image via backend AI
-  const handleRegenerateScene = async () => {
-    setIsGeneratingSceneImage(true);
-    try {
-      const res = await fetch('/api/sceneswap/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          genre,
-          tone,
-          setting_description: settingDescription,
-          chapter_number: chapterNumber,
-          chapter_title: chapterTitle,
-          type: 'scene',
-        }),
-      });
+  // Handle triggering file upload for a specific player
+  const triggerUploadFor = (playerName: string) => {
+    setUploadTargetPlayer(playerName);
+    fileInputRef.current?.click();
+  };
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.imageUrl) {
-          setSceneImageUrl(data.imageUrl);
-        }
-      }
+  // Handle file change from custom photo picker
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetPlayer) return;
+    try {
+      const dataUrl = await compressImageFile(file, 400, 0.85);
+      setStoredCustomAvatar(uploadTargetPlayer, dataUrl);
+      setLocalCustomPhotos((prev) => ({
+        ...prev,
+        [uploadTargetPlayer.toLowerCase()]: dataUrl,
+      }));
+      onUpdateCustomPhoto?.(uploadTargetPlayer, dataUrl);
+      soundEngine.playDialogueBlip(1.3);
+      setSoundEffectStamp(`📷 ${uploadTargetPlayer.toUpperCase()} PHOTO UPDATED!`);
+      setTimeout(() => setSoundEffectStamp(null), 1500);
     } catch (err) {
-      console.warn('Failed to regenerate scene image:', err);
+      console.warn('Failed to upload player photo:', err);
     } finally {
-      setIsGeneratingSceneImage(false);
+      if (e.target) e.target.value = '';
+      setUploadTargetPlayer(null);
     }
   };
 
@@ -163,6 +185,46 @@ export function StudioScriptPortraitView({
   const currentCastMember = cast.find(
     (c) => c.player.toLowerCase() === currentItem?.speaker.toLowerCase()
   );
+
+  // Regenerate realistic scene image via backend AI with characters inside the scene!
+  const handleRegenerateScene = async () => {
+    setIsGeneratingSceneImage(true);
+    try {
+      const res = await fetch('/api/sceneswap/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          genre,
+          tone,
+          setting_description: settingDescription,
+          chapter_number: chapterNumber,
+          chapter_title: chapterTitle,
+          type: 'scene',
+          aspectRatio: '9:16',
+          cast: cast.map((c) => ({
+            player: c.player,
+            role: c.role,
+            archetype: c.archetype,
+            motivation: c.motivation,
+            nationality: detectNameNationality(c.player).label,
+          })),
+          activeSpeaker: currentItem?.speaker,
+          activeLine: currentItem?.line,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.imageUrl) {
+          setSceneImageUrl(data.imageUrl);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to regenerate scene image:', err);
+    } finally {
+      setIsGeneratingSceneImage(false);
+    }
+  };
 
   // Sound stamp trigger
   const handleTriggerStamp = (type: 'vine' | 'sting' | 'scratch' | 'boing' | 'thunder', label: string) => {
@@ -266,7 +328,7 @@ export function StudioScriptPortraitView({
 
   // Copy Director's Cut
   const handleCopyDirectorsCut = () => {
-    const text = `🎬 [SCENESWAP DIRECTORS CUT - ACT ${chapterNumber}: ${chapterTitle}]\nGenre: ${genre} | Tone: ${tone}\nSetting: ${settingDescription}\n\nCAST ROLES:\n${cast.map((c) => `- ${c.player} as ${c.role} (${c.archetype})`).join('\n')}\n\nSCENE SCRIPT:\n${scriptLines.map((l) => `${l.speaker.toUpperCase()} ${l.direction ? `(${l.direction}) ` : ''}: "${l.line}"`).join('\n\n')}\n\n${isFinale ? `GRAND FINALE: ${finaleSummary || ''}` : `CHOICES:\n${plotChoices.map((p) => `[${p.id}] ${p.label}: ${p.description}`).join('\n')}`}`;
+    const text = `🎬 [SCENESWAP DIRECTORS CUT - ACT ${chapterNumber}: ${chapterTitle}]\nGenre: ${genre} | Tone: ${tone}\nSetting: ${settingDescription}\n\nCAST ROLES:\n${cast.map((c) => `- ${c.player} as ${c.role} (${c.archetype}) [${detectNameNationality(c.player).label}]`).join('\n')}\n\nSCENE SCRIPT:\n${scriptLines.map((l) => `${l.speaker.toUpperCase()} ${l.direction ? `(${l.direction}) ` : ''}: "${l.line}"`).join('\n\n')}\n\n${isFinale ? `GRAND FINALE: ${finaleSummary || ''}` : `CHOICES:\n${plotChoices.map((p) => `[${p.id}] ${p.label}: ${p.description}`).join('\n')}`}`;
 
     navigator.clipboard.writeText(text);
     setCopiedCut(true);
@@ -283,6 +345,15 @@ export function StudioScriptPortraitView({
         isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen w-screen min-h-screen' : ''
       }`}
     >
+      {/* Hidden file input for uploading custom player avatars */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/*"
+        className="hidden"
+        onChange={handlePhotoFileChange}
+      />
+
       {/* =========================================================================
           TIKTOK PORTRAIT BACKGROUND (9:16 VERTICAL REEL PHOTO COVERING THE STAGE)
           ========================================================================= */}
@@ -357,7 +428,7 @@ export function StudioScriptPortraitView({
           </div>
         </div>
 
-        {/* Right: Audio Cue, Mute, Fullscreen */}
+        {/* Right: Audio Cue, Mute, Re-render Photo, Fullscreen */}
         <div className="flex items-center gap-1.5">
           {/* Atmos Cue Button */}
           <button
@@ -388,12 +459,12 @@ export function StudioScriptPortraitView({
             {isSoundMuted ? <VolumeX className="h-3.5 w-3.5 text-rose-400" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-400" />}
           </button>
 
-          {/* Re-render Scene Photo */}
+          {/* Re-render Scene Photo With Characters */}
           <button
             type="button"
             onClick={handleRegenerateScene}
             disabled={isGeneratingSceneImage}
-            title="Regenerate realistic scene photo"
+            title="Re-render scene photo with characters inside"
             className="flex items-center rounded-lg bg-black/70 p-1.5 text-slate-300 hover:text-white border border-white/15 backdrop-blur-md transition active:scale-95"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isGeneratingSceneImage ? 'animate-spin text-amber-400' : ''}`} />
@@ -427,21 +498,26 @@ export function StudioScriptPortraitView({
           ========================================================================= */}
       {viewSubMode === 'tiktok' && (
         <div className="absolute right-2.5 sm:right-3.5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-2.5">
-          {/* Active Speaking Character Avatar Bubble */}
+          {/* Active Speaking Character Avatar Bubble with Upload Option */}
           {currentCastMember && (
             <div className="flex flex-col items-center group">
               <div
-                className={`relative h-12 w-12 sm:h-14 sm:w-14 rounded-full overflow-hidden border-2 ${currentStyle.border} shadow-[0_0_16px_rgba(0,0,0,0.8)] ring-2 ring-amber-400/50 bg-black`}
+                onClick={() => triggerUploadFor(currentCastMember.player)}
+                title={`Click to upload your own photo for ${currentCastMember.player}`}
+                className={`relative h-12 w-12 sm:h-14 sm:w-14 rounded-full overflow-hidden border-2 ${currentStyle.border} shadow-[0_0_16px_rgba(0,0,0,0.8)] ring-2 ring-amber-400/50 bg-black cursor-pointer`}
               >
                 <img
                   src={
                     characterPortraits[currentCastMember.player.toLowerCase()] ||
-                    getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre)
+                    getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre, localCustomPhotos)
                   }
                   alt={currentCastMember.player}
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-cover object-top"
                 />
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                  <Camera className="h-4 w-4 text-white" />
+                </div>
                 <span className="absolute bottom-0 inset-x-0 bg-red-600 text-[7px] font-black uppercase text-white text-center py-0.2">
                   LIVE
                 </span>
@@ -452,7 +528,7 @@ export function StudioScriptPortraitView({
             </div>
           )}
 
-          {/* Quick Sound FX Reaction Buttons (TikTok Style Circular Badges) */}
+          {/* Quick Sound FX Reaction Buttons */}
           <button
             type="button"
             onClick={() => handleTriggerStamp('vine', 'VINE BOOM!')}
@@ -534,7 +610,7 @@ export function StudioScriptPortraitView({
           <button
             type="button"
             onClick={() => setShowCastDrawer(!showCastDrawer)}
-            title="Cast roles & secrets"
+            title="Cast roles, nationalities & secrets"
             className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
           >
             <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-indigo-600/80 border border-white/20 hover:border-indigo-400 flex items-center justify-center text-indigo-300 shadow-lg backdrop-blur-md transition">
@@ -551,24 +627,152 @@ export function StudioScriptPortraitView({
           VIEW A: TIKTOK LIVE TELEPROMPTER VIEW (FILLS SCREEN DOWN TO BOTTOM)
           ========================================================================= */}
       {viewSubMode === 'tiktok' ? (
-        <div className="relative z-20 flex-1 flex flex-col justify-end p-3 sm:p-5 overflow-hidden">
-          {/* Setting & Chapter Pill Floating at Upper-Mid */}
-          <div className="mb-auto pt-1 pointer-events-none max-w-[78%]">
+        <div className="relative z-20 flex-1 flex flex-col justify-between p-3 sm:p-5 overflow-hidden">
+          {/* Top Setting & Chapter Title */}
+          <div className="pt-1 pointer-events-none max-w-[78%]">
             <h2 className="text-base sm:text-xl font-black text-white drop-shadow-[0_2px_8px_rgba(0,0,0,1)] tracking-tight">
               {chapterTitle}
             </h2>
-            <p className="text-[11px] text-amber-200/90 font-medium italic drop-shadow-[0_1px_4px_rgba(0,0,0,1)] line-clamp-2 mt-0.5">
+            <p className="text-[11px] text-amber-200/90 font-medium italic drop-shadow-[0_1px_4px_rgba(0,0,0,1)] line-clamp-1 mt-0.5">
               📍 {settingDescription}
             </p>
           </div>
 
-          {/* Floating Cast Members Drawer if open */}
+          {/* =========================================================================
+              CHARACTERS IN THE SCENE: CINEMATIC STAGING DIRECTLY INSIDE THE ROOM
+              ========================================================================= */}
+          <div className="my-auto py-2 flex flex-col items-center justify-center pointer-events-auto">
+            {/* Active Spotlight Speaker Character Inside the Scene */}
+            {currentCastMember && (
+              <div className="flex flex-col items-center text-center animate-in zoom-in-95 duration-300 max-w-[280px]">
+                <div className="relative group">
+                  {/* Dramatic Cinematic Aura Ring */}
+                  <div className="absolute -inset-2.5 rounded-full bg-gradient-to-r from-amber-500/35 to-purple-500/35 blur-md animate-pulse pointer-events-none" />
+
+                  {/* Character Avatar with Camera Button to upload their own photo */}
+                  <div
+                    className={`relative h-24 w-24 sm:h-28 sm:w-28 rounded-full overflow-hidden border-3 ${currentStyle.border} shadow-[0_0_30px_rgba(0,0,0,0.9)] ring-4 ring-amber-400/50 bg-slate-950 transition`}
+                  >
+                    <img
+                      src={
+                        characterPortraits[currentCastMember.player.toLowerCase()] ||
+                        getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre, localCustomPhotos)
+                      }
+                      alt={currentCastMember.player}
+                      className="h-full w-full object-cover object-top filter brightness-105"
+                    />
+
+                    {/* Live Speaking Indicator */}
+                    <div className="absolute top-1.5 right-1.5 flex h-3.5 w-3.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 ring-1 ring-white" />
+                    </div>
+
+                    {/* Button for players to upload their own photo */}
+                    <button
+                      type="button"
+                      onClick={() => triggerUploadFor(currentCastMember.player)}
+                      title="Upload your own photo as avatar"
+                      className="absolute inset-x-0 bottom-0 bg-black/85 hover:bg-amber-600/90 py-1 flex items-center justify-center gap-1 text-[9px] font-bold text-white transition cursor-pointer"
+                    >
+                      <Camera className="h-2.5 w-2.5 text-amber-300" />
+                      <span>{localCustomPhotos[currentCastMember.player.toLowerCase()] ? 'Change Photo' : 'Upload Photo'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Speaker Identity, Role & Nationality Details */}
+                <div className="mt-2 space-y-0.5">
+                  <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                    <span className="text-sm font-black text-white drop-shadow-md uppercase tracking-wide">
+                      {currentCastMember.player}
+                    </span>
+                    <span className="rounded bg-black/80 border border-white/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-300">
+                      {currentCastMember.role}
+                    </span>
+                  </div>
+
+                  {/* Nationality matched to character name */}
+                  <div className="flex items-center justify-center gap-1 text-[9px] text-slate-300 drop-shadow">
+                    <span className="text-slate-400">Nationality:</span>
+                    <span className="font-semibold text-emerald-300">
+                      {detectNameNationality(currentCastMember.player).label}
+                    </span>
+                    {localCustomPhotos[currentCastMember.player.toLowerCase()] && (
+                      <span className="bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded text-[8px] font-mono">
+                        Custom Photo Active
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-[10px] text-amber-200/90 italic font-medium drop-shadow line-clamp-1">
+                    &ldquo;{currentCastMember.motivation}&rdquo;
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Other Characters Staged in the Scene (Lineup inside room) */}
+            <div className="mt-3 flex items-center justify-center gap-2 flex-wrap bg-black/70 p-2 rounded-2xl border border-white/10 backdrop-blur-md max-w-[95%]">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 pr-1">
+                Scene Cast:
+              </span>
+              {cast.map((member, i) => {
+                const isSpeaking = member.player.toLowerCase() === currentItem?.speaker.toLowerCase();
+                const color = playerColorStyles[i % playerColorStyles.length];
+                const nationality = detectNameNationality(member.player);
+                const photo = characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre, localCustomPhotos);
+
+                return (
+                  <div
+                    key={i}
+                    className={`relative group flex flex-col items-center cursor-pointer transition ${
+                      isSpeaking ? 'scale-105' : 'opacity-75 hover:opacity-100'
+                    }`}
+                    onClick={() => {
+                      const idx = scriptLines.findIndex((l) => l.speaker.toLowerCase() === member.player.toLowerCase());
+                      if (idx >= 0) onLineChange(idx);
+                    }}
+                  >
+                    <div
+                      className={`relative h-10 w-10 sm:h-11 sm:w-11 rounded-xl overflow-hidden border-2 transition ${
+                        isSpeaking
+                          ? `${color.border} ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]`
+                          : 'border-white/20'
+                      }`}
+                    >
+                      <img src={photo} alt={member.player} className="h-full w-full object-cover object-top" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerUploadFor(member.player);
+                        }}
+                        title={`Upload custom photo for ${member.player}`}
+                        className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center transition"
+                      >
+                        <Camera className="h-3 w-3 text-white" />
+                      </button>
+                    </div>
+                    <span className="text-[8px] font-bold text-white max-w-[48px] truncate mt-0.5">
+                      {member.player}
+                    </span>
+                    <span className="text-[7px] text-emerald-300 font-mono">
+                      {nationality.region}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Floating Cast Members Drawer if toggled */}
           {showCastDrawer && (
-            <div className="mb-3 rounded-2xl border border-white/20 bg-black/85 p-3 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[85%]">
+            <div className="mb-3 rounded-2xl border border-white/20 bg-black/90 p-3 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[85%]">
               <div className="flex items-center justify-between mb-2 pb-1 border-b border-white/10">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1">
                   <Users className="h-3 w-3" />
-                  Active Cast Dossier
+                  Active Cast Dossier & Nationalities
                 </span>
                 <button
                   type="button"
@@ -581,11 +785,22 @@ export function StudioScriptPortraitView({
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                 {cast.map((member, i) => {
                   const style = playerColorStyles[i % playerColorStyles.length];
+                  const nationality = detectNameNationality(member.player);
                   return (
                     <div key={i} className={`p-1.5 rounded-lg border ${style.border} ${style.bg} text-[10px]`}>
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white">{member.player}</span>
                         <span className={style.text}>{member.role}</span>
+                      </div>
+                      <div className="text-[9px] text-emerald-300 flex items-center justify-between mt-0.5">
+                        <span>Heritage: {nationality.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => triggerUploadFor(member.player)}
+                          className="text-amber-300 underline text-[8px]"
+                        >
+                          📷 Change Photo
+                        </button>
                       </div>
                       <p className="text-slate-300 italic text-[9px] mt-0.5">&ldquo;{member.motivation}&rdquo;</p>
                       {member.secret && (
@@ -736,34 +951,56 @@ export function StudioScriptPortraitView({
             </div>
           </div>
 
-          {/* Cast Roles Badges Strip */}
+          {/* Cast Roles Badges Strip with Nationality & Photo Upload */}
           <div className="rounded-xl border border-white/10 bg-black/60 p-3 backdrop-blur-md">
             <div className="flex items-center justify-between mb-2">
               <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
                 <Users className="h-3 w-3 text-indigo-400" />
-                Cast Roles & Secrets ({cast.length} Actors)
+                Cast Roles, Nationalities & Photos ({cast.length} Actors)
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {cast.map((member, i) => {
                 const color = playerColorStyles[i % playerColorStyles.length];
+                const nationality = detectNameNationality(member.player);
+                const photo = characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre, localCustomPhotos);
+
                 return (
-                  <div key={i} className={`rounded-lg border ${color.border} ${color.bg} p-2 text-xs backdrop-blur-sm`}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-white flex items-center gap-1">
-                        <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
-                        {member.player}
-                      </span>
-                      <span className={`text-[10px] font-medium ${color.text}`}>{member.role}</span>
+                  <div key={i} className={`rounded-lg border ${color.border} ${color.bg} p-2 text-xs backdrop-blur-sm flex items-start gap-2`}>
+                    <div
+                      onClick={() => triggerUploadFor(member.player)}
+                      title={`Upload custom photo for ${member.player}`}
+                      className="relative group h-9 w-9 rounded-full overflow-hidden border border-white/30 shrink-0 bg-slate-900 cursor-pointer"
+                    >
+                      <img src={photo} alt={member.player} className="h-full w-full object-cover" />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                        <Camera className="h-3 w-3 text-white" />
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-300 mt-0.5 italic">
-                      &ldquo;{member.motivation}&rdquo;
-                    </p>
-                    {member.secret && (
-                      <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">
-                        🔒 Secret: {member.secret}
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white flex items-center gap-1">
+                          <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
+                          {member.player}
+                        </span>
+                        <span className={`text-[10px] font-medium ${color.text}`}>{member.role}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[9px] text-emerald-300">
+                        <span>{nationality.label}</span>
+                        {localCustomPhotos[member.player.toLowerCase()] && (
+                          <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1 rounded">Custom</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-300 mt-0.5 italic truncate">
+                        &ldquo;{member.motivation}&rdquo;
                       </p>
-                    )}
+                      {member.secret && (
+                        <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">
+                          🔒 Secret: {member.secret}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 );
               })}

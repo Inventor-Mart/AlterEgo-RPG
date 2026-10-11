@@ -19,9 +19,16 @@ import {
   Minimize2,
   Share2,
   Film,
+  Camera,
 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEngine';
-import { getRealisticCharacterPhoto } from '../utils/characterAvatars';
+import {
+  getRealisticCharacterPhoto,
+  detectNameNationality,
+  compressImageFile,
+  setStoredCustomAvatar,
+  getStoredCustomAvatars,
+} from '../utils/characterAvatars';
 
 export function getDefaultRealisticSceneImage(genre: string, chapter: number): string {
   const ch = Math.min(Math.max(chapter || 1, 1), 3);
@@ -98,6 +105,8 @@ interface CinematicSceneStageProps {
   isBranchingChapter: boolean;
   onResetToLobby: () => void;
   playerColorStyles: { border: string; bg: string; text: string; ring?: string; badge?: string }[];
+  customPlayerPhotos?: Record<string, string>;
+  onUpdateCustomPhoto?: (playerName: string, dataUrl: string) => void;
 }
 
 export function CinematicSceneStage({
@@ -121,6 +130,8 @@ export function CinematicSceneStage({
   isBranchingChapter,
   onResetToLobby,
   playerColorStyles,
+  customPlayerPhotos = {},
+  onUpdateCustomPhoto,
 }: CinematicSceneStageProps) {
   // Scene Image State - Pre-populated with high-resolution photographic scene from 0ms
   const [sceneImageUrl, setSceneImageUrl] = useState<string>(() =>
@@ -129,11 +140,24 @@ export function CinematicSceneStage({
   const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<boolean>(false);
   const [isAiGeneratedScene, setIsAiGeneratedScene] = useState<boolean>(false);
 
+  // Local state for custom photos to ensure immediate re-rendering
+  const [localCustomPhotos, setLocalCustomPhotos] = useState<Record<string, string>>(() => ({
+    ...getStoredCustomAvatars(),
+    ...customPlayerPhotos,
+  }));
+  const [uploadTargetPlayer, setUploadTargetPlayer] = useState<string | null>(null);
+  const stageFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Character Portraits Cache - Pre-populated with realistic photographic portraits from 0ms
   const [characterPortraits, setCharacterPortraits] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
     for (const member of cast) {
-      map[member.player.toLowerCase()] = getRealisticCharacterPhoto(member.player, member.role, genre);
+      map[member.player.toLowerCase()] = getRealisticCharacterPhoto(
+        member.player,
+        member.role,
+        genre,
+        { ...getStoredCustomAvatars(), ...customPlayerPhotos }
+      );
     }
     return map;
   });
@@ -150,7 +174,38 @@ export function CinematicSceneStage({
   const autoPlayTimerRef = useRef<NodeJS.Timeout | null>(null);
   const stageContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch or generate realistic scene image
+  // Handle triggering file upload for a specific player
+  const triggerUploadFor = (playerName: string) => {
+    setUploadTargetPlayer(playerName);
+    stageFileInputRef.current?.click();
+  };
+
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetPlayer) return;
+    try {
+      const dataUrl = await compressImageFile(file, 400, 0.85);
+      setStoredCustomAvatar(uploadTargetPlayer, dataUrl);
+      setLocalCustomPhotos((prev) => ({
+        ...prev,
+        [uploadTargetPlayer.toLowerCase()]: dataUrl,
+      }));
+      onUpdateCustomPhoto?.(uploadTargetPlayer, dataUrl);
+      soundEngine.playDialogueBlip(1.3);
+      setSoundEffectStamp(`📷 ${uploadTargetPlayer.toUpperCase()} PHOTO UPDATED!`);
+      setTimeout(() => setSoundEffectStamp(null), 1500);
+    } catch (err) {
+      console.warn('Failed to upload player photo:', err);
+    } finally {
+      if (e.target) e.target.value = '';
+      setUploadTargetPlayer(null);
+    }
+  };
+
+  // Current Line Details
+  const currentItem = scriptLines[currentLineIndex] || scriptLines[0];
+
+  // Fetch or generate realistic scene image with characters inside the scene!
   const fetchRealisticSceneImage = useCallback(async (forceRegenerate: boolean = false) => {
     setIsGeneratingSceneImage(true);
     try {
@@ -164,6 +219,16 @@ export function CinematicSceneStage({
           chapter_number: chapterNumber,
           chapter_title: chapterTitle,
           type: 'scene',
+          aspectRatio: '16:9',
+          cast: cast.map((c) => ({
+            player: c.player,
+            role: c.role,
+            archetype: c.archetype,
+            motivation: c.motivation,
+            nationality: detectNameNationality(c.player).label,
+          })),
+          activeSpeaker: currentItem?.speaker,
+          activeLine: currentItem?.line,
         }),
       });
 
@@ -179,9 +244,9 @@ export function CinematicSceneStage({
     } finally {
       setIsGeneratingSceneImage(false);
     }
-  }, [genre, tone, settingDescription, chapterNumber, chapterTitle]);
+  }, [genre, tone, settingDescription, chapterNumber, chapterTitle, cast, currentItem]);
 
-  // Generate realistic character portraits instantly
+  // Generate realistic character portraits matching nationality and custom uploads
   const fetchCharacterPortraits = useCallback(() => {
     if (cast.length === 0) return;
     const newPortraits: Record<string, string> = {};
@@ -189,11 +254,12 @@ export function CinematicSceneStage({
       newPortraits[member.player.toLowerCase()] = getRealisticCharacterPhoto(
         member.player,
         member.role,
-        genre
+        genre,
+        localCustomPhotos
       );
     }
     setCharacterPortraits(newPortraits);
-  }, [cast, genre]);
+  }, [cast, genre, localCustomPhotos]);
 
   // Load scene & character images on chapter change
   useEffect(() => {
@@ -202,7 +268,6 @@ export function CinematicSceneStage({
   }, [chapterNumber, genre, fetchCharacterPortraits]);
 
   // Current Line Details
-  const currentItem = scriptLines[currentLineIndex] || scriptLines[0];
   const totalLines = scriptLines.length;
   const isLastLine = currentLineIndex >= totalLines - 1;
 
@@ -327,6 +392,14 @@ export function CinematicSceneStage({
         isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen w-screen' : ''
       }`}
     >
+      {/* Hidden file input for custom photo uploads */}
+      <input
+        type="file"
+        ref={stageFileInputRef}
+        accept="image/*"
+        className="hidden"
+        onChange={handlePhotoFileChange}
+      />
       {/* 1. CINEMATIC SCENE IMAGE VIEWPORT (LARGE PHOTOREALISTIC DOMINANT VIEW) */}
       <div className="relative w-full aspect-[16/9] min-h-[380px] md:min-h-[500px] lg:min-h-[560px] overflow-hidden bg-slate-950 flex flex-col justify-between">
         {/* Realistic Scene Background Image */}
@@ -428,10 +501,12 @@ export function CinematicSceneStage({
               <div className="relative group">
                 {/* Character Portrait with Glowing Aura */}
                 <div
-                  className={`relative h-20 w-20 md:h-28 md:w-28 rounded-2xl overflow-hidden border-2 ${currentStyle.border} ${currentStyle.ring || 'ring-4 ring-amber-400/30'} shadow-[0_0_24px_rgba(0,0,0,0.8)] bg-slate-900 transition-all duration-300`}
+                  onClick={() => triggerUploadFor(currentCastMember.player)}
+                  title={`Upload your own photo for ${currentCastMember.player}`}
+                  className={`relative h-20 w-20 md:h-28 md:w-28 rounded-2xl overflow-hidden border-2 ${currentStyle.border} ${currentStyle.ring || 'ring-4 ring-amber-400/30'} shadow-[0_0_24px_rgba(0,0,0,0.8)] bg-slate-900 transition-all duration-300 cursor-pointer`}
                 >
                   <img
-                    src={characterPortraits[currentCastMember.player.toLowerCase()] || getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre)}
+                    src={characterPortraits[currentCastMember.player.toLowerCase()] || getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre, localCustomPhotos)}
                     alt={currentCastMember.player}
                     referrerPolicy="no-referrer"
                     className="h-full w-full object-cover object-top filter brightness-105"
@@ -441,6 +516,12 @@ export function CinematicSceneStage({
                   <div className="absolute top-1.5 right-1.5 flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+                  </div>
+
+                  {/* Photo Upload Hover Overlay */}
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1 text-[9px] font-bold text-white transition">
+                    <Camera className="h-3.5 w-3.5 text-amber-300" />
+                    <span>My Photo</span>
                   </div>
                 </div>
 
@@ -452,9 +533,14 @@ export function CinematicSceneStage({
 
               {/* Character Details Pill */}
               <div className="hidden sm:block text-left mb-1">
-                <span className="text-xs font-black uppercase tracking-wider text-white drop-shadow">
-                  {currentCastMember.player}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-black uppercase tracking-wider text-white drop-shadow">
+                    {currentCastMember.player}
+                  </span>
+                  <span className="text-[9px] font-bold text-emerald-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10">
+                    {detectNameNationality(currentCastMember.player).label}
+                  </span>
+                </div>
                 <p className="text-[10px] text-amber-200/90 font-medium italic drop-shadow">
                   &ldquo;{currentCastMember.motivation}&rdquo;
                 </p>
@@ -472,38 +558,51 @@ export function CinematicSceneStage({
               const style = playerColorStyles[i % playerColorStyles.length];
 
               return (
-                <button
+                <div
                   key={i}
-                  type="button"
-                  onClick={() => {
-                    // Find first line spoken by this cast member
-                    const nextLineIdx = scriptLines.findIndex(
-                      (l) => l.speaker.toLowerCase() === member.player.toLowerCase()
-                    );
-                    if (nextLineIdx >= 0) {
-                      soundEngine.playDialogueBlip(1.1);
-                      onLineChange(nextLineIdx);
-                    }
-                  }}
-                  title={`${member.player} as ${member.role}`}
-                  className={`relative h-10 w-10 md:h-12 md:w-12 rounded-xl overflow-hidden border transition-all duration-200 active:scale-95 ${
-                    isSpeaking
-                      ? `border-amber-400 scale-105 ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)]`
-                      : `border-white/20 opacity-60 hover:opacity-100 hover:border-white/50`
-                  }`}
+                  className="relative group flex flex-col items-center"
                 >
-                  <img
-                    src={characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre)}
-                    alt={member.player}
-                    referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover object-top"
-                  />
-                  {isSpeaking && (
-                    <div className="absolute inset-x-0 bottom-0 bg-black/80 text-[7px] font-bold text-amber-300 text-center py-0.2">
-                      LIVE
-                    </div>
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextLineIdx = scriptLines.findIndex(
+                        (l) => l.speaker.toLowerCase() === member.player.toLowerCase()
+                      );
+                      if (nextLineIdx >= 0) {
+                        soundEngine.playDialogueBlip(1.1);
+                        onLineChange(nextLineIdx);
+                      }
+                    }}
+                    title={`${member.player} as ${member.role} (${detectNameNationality(member.player).label})`}
+                    className={`relative h-10 w-10 md:h-12 md:w-12 rounded-xl overflow-hidden border transition-all duration-200 active:scale-95 ${
+                      isSpeaking
+                        ? `border-amber-400 scale-105 ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)]`
+                        : `border-white/20 opacity-60 hover:opacity-100 hover:border-white/50`
+                    }`}
+                  >
+                    <img
+                      src={characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre, localCustomPhotos)}
+                      alt={member.player}
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-cover object-top"
+                    />
+                    {isSpeaking && (
+                      <div className="absolute inset-x-0 bottom-0 bg-black/80 text-[7px] font-bold text-amber-300 text-center py-0.2">
+                        LIVE
+                      </div>
+                    )}
+                  </button>
+
+                  {/* Camera icon button to upload photo */}
+                  <button
+                    type="button"
+                    onClick={() => triggerUploadFor(member.player)}
+                    title={`Upload photo for ${member.player}`}
+                    className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-black/80 border border-white/30 flex items-center justify-center text-slate-300 hover:text-white hover:bg-amber-600 transition"
+                  >
+                    <Camera className="h-2.5 w-2.5" />
+                  </button>
+                </div>
               );
             })}
           </div>

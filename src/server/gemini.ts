@@ -1024,6 +1024,16 @@ export interface RealisticImageRequest {
   chapter_number?: number;
   chapter_title?: string;
   type?: 'scene' | 'character';
+  aspectRatio?: '9:16' | '16:9' | '3:4' | '1:1';
+  cast?: Array<{
+    player: string;
+    role: string;
+    archetype?: string;
+    motivation?: string;
+    secret?: string;
+  }>;
+  activeSpeaker?: string;
+  activeLine?: string;
   character?: {
     player: string;
     role: string;
@@ -1073,7 +1083,22 @@ export async function generateSceneSwapRealisticImage(
     return result;
   }
 
-  const prompt = `Cinematic wide 16:9 movie still, photorealistic 8k, shot on Arri Alexa 35 with anamorphic lens. Scene environment: "${setting}". Movie Genre: "${genre}". Mood and tone: "${tone}". Act ${chapterNumber}. Ultra-detailed architecture, atmospheric volumetric haze, realistic cinematic lighting and shadow contrast, cinematic composition. Pristine realism, no text, no watermarks, film still masterpiece.`;
+  const targetAspectRatio = inputs.aspectRatio === '16:9' ? '16:9' : '9:16';
+
+  // Build prominent character staging description inside the scene
+  const castListText = inputs.cast && inputs.cast.length > 0
+    ? inputs.cast
+        .map((c) => `Actor "${c.player}" in character as "${c.role}" (${c.motivation ? `motivation: ${c.motivation}` : ''})`)
+        .join(', ')
+    : 'The main ensemble cast members dressed in genre-authentic costumes';
+
+  const activeFocusText = inputs.activeSpeaker
+    ? `Featuring ${inputs.activeSpeaker} prominently in the scene action delivering dialogue: "${inputs.activeLine || ''}".`
+    : '';
+
+  const prompt = targetAspectRatio === '9:16'
+    ? `Cinematic portrait 9:16 vertical film still, TikTok portrait view, photorealistic 8k Arri Alexa cinema capture. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}: "${inputs.chapter_title || ''}". CHARACTERS PROMINENTLY VISIBLE AND ACTIVE INSIDE THE SCENE: ${castListText}. ${activeFocusText} The characters are physically staged inside the environment with expressive acting, authentic cultural and ethnic appearances matching their names, realistic costumes, interacting in the dramatic room. Foreground and midground character presence, volumetric atmospheric lighting, cinematic color grade, photorealistic masterwork, no text, no watermarks, film still.`
+    : `Cinematic wide 16:9 movie still, photorealistic 8k, shot on Arri Alexa 35 with anamorphic lens. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}. CHARACTERS PROMINENTLY VISIBLE INSIDE THE SCENE: ${castListText}. ${activeFocusText} The characters are actively staged in the room, authentic cultural likeness and wardrobe matching their names and roles, realistic cinematic lighting and shadow contrast, cinematic composition. Pristine realism, no text, no watermarks, film still masterpiece.`;
 
   const ai = getGeminiClient();
   const isCooldown = Date.now() < imageQuotaCooldownUntil;
@@ -1087,7 +1112,7 @@ export async function generateSceneSwapRealisticImage(
         },
         config: {
           imageConfig: {
-            aspectRatio: '16:9',
+            aspectRatio: targetAspectRatio,
           },
         },
       });

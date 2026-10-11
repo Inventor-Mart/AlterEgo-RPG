@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import {
   Sparkles,
   Clapperboard,
@@ -43,11 +43,20 @@ import {
   Layers,
   Radio,
   Film,
+  Camera,
   CheckCircle2,
   Cloud,
   CloudOff,
   Database,
 } from 'lucide-react';
+import {
+  getRealisticCharacterPhoto,
+  detectNameNationality,
+  getStoredCustomAvatars,
+  setStoredCustomAvatar,
+  removeStoredCustomAvatar,
+  compressImageFile,
+} from './utils/characterAvatars';
 import { SceneIllustration } from './components/SceneIllustration';
 import { StudioScriptPortraitView } from './components/StudioScriptPortraitView';
 import { ComicPanelViewer } from './components/ComicPanelViewer';
@@ -1056,6 +1065,11 @@ export default function App() {
   const [selectedTone, setSelectedTone] = useState<string>('Explosive & Theatrical');
   const [wildcardHook, setWildcardHook] = useState<string>('');
 
+  // SceneSwap Custom Player Photo Avatars
+  const [playerCustomPhotos, setPlayerCustomPhotos] = useState<Record<string, string>>(() => getStoredCustomAvatars());
+  const playerPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const [activePhotoUploadPlayer, setActivePhotoUploadPlayer] = useState<string | null>(null);
+
   // SceneSwap Multi-Branch Engine & Teleprompter State (FR-2.0 & FR-3.0)
   const [activeChapter, setActiveChapter] = useState<SceneSwapChapterResult | null>(null);
   const [chapterHistory, setChapterHistory] = useState<Array<{
@@ -1446,6 +1460,37 @@ export default function App() {
     setPlayerInputError(null);
     setPartyPlayers([...preset]);
     soundEngine.playDialogueBlip(1.1);
+  }
+
+  function handleTriggerUploadPhoto(playerName: string) {
+    setActivePhotoUploadPlayer(playerName);
+    playerPhotoInputRef.current?.click();
+  }
+
+  async function handlePlayerPhotoFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !activePhotoUploadPlayer) return;
+    try {
+      const dataUrl = await compressImageFile(file, 400, 0.85);
+      setStoredCustomAvatar(activePhotoUploadPlayer, dataUrl);
+      setPlayerCustomPhotos((prev) => ({
+        ...prev,
+        [activePhotoUploadPlayer.toLowerCase()]: dataUrl,
+      }));
+      soundEngine.playDialogueBlip(1.3);
+    } catch (err) {
+      console.warn('Failed to compress/save photo:', err);
+    } finally {
+      if (e.target) e.target.value = '';
+      setActivePhotoUploadPlayer(null);
+    }
+  }
+
+  function handleUpdateCustomPhotoFromStage(playerName: string, dataUrl: string) {
+    setPlayerCustomPhotos((prev) => ({
+      ...prev,
+      [playerName.toLowerCase()]: dataUrl,
+    }));
   }
 
   function handleRollWildcardHook() {
@@ -2765,6 +2810,8 @@ export default function App() {
                     isBranchingChapter={isBranchingChapter}
                     onResetToLobby={handleResetPartyShoot}
                     playerColorStyles={PLAYER_COLOR_STYLES}
+                    customPlayerPhotos={playerCustomPhotos}
+                    onUpdateCustomPhoto={handleUpdateCustomPhotoFromStage}
                   />
                 ) : (
                   /* SECONDARY VIEW: COMPLETE STUDIO SCREENPLAY SCRIPT & DOSSIER (TIKTOK PORTRAIT & SCREEN-FILLING) */
@@ -2789,12 +2836,23 @@ export default function App() {
                     isBranchingChapter={isBranchingChapter}
                     onResetToLobby={handleResetPartyShoot}
                     playerColorStyles={PLAYER_COLOR_STYLES}
+                    customPlayerPhotos={playerCustomPhotos}
+                    onUpdateCustomPhoto={handleUpdateCustomPhotoFromStage}
                   />
                 )}
               </div>
             ) : (
               /* FR-1.0: PARTY LOBBY ENGINE */
               <form className="flex flex-col gap-4" onSubmit={handleStartPartyShoot}>
+                {/* Hidden File Picker for Custom Player Avatars */}
+                <input
+                  type="file"
+                  ref={playerPhotoInputRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePlayerPhotoFileChange}
+                />
+
                 {/* Lobby Header */}
                 <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-black/60 p-4 space-y-1">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300 uppercase tracking-widest">
@@ -2805,11 +2863,11 @@ export default function App() {
                     Cast Your Hangout Into A 3-Act Branching Film
                   </h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Tag 2 to 5 friends, select your genre, and vote live after every act to decide the plot.
+                    Tag 2 to 5 friends, upload custom photos or use nationality-matched character portraits, and vote live after every act.
                   </p>
                 </div>
 
-                {/* FR-1.0: Interactive Tag/Chip Input Box for Players */}
+                {/* FR-1.0: Interactive Tag/Chip Input Box for Players with Avatars & Nationality */}
                 <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md">
                   <div className="flex items-center justify-between">
                     <label className={labelClass}>
@@ -2821,26 +2879,72 @@ export default function App() {
                     </span>
                   </div>
 
-                  {/* Player Chips Display */}
+                  {/* Player Chips Display with Avatar & Nationality */}
                   <div className="flex flex-wrap gap-2 min-h-[38px] p-2 rounded-xl border border-white/10 bg-black/40">
                     {partyPlayers.map((player, index) => {
                       const color = PLAYER_COLOR_STYLES[index % PLAYER_COLOR_STYLES.length];
+                      const nationality = detectNameNationality(player);
+                      const hasCustom = !!playerCustomPhotos[player.toLowerCase()];
+                      const avatarUrl = getRealisticCharacterPhoto(player, '', selectedGenre, playerCustomPhotos);
+
                       return (
-                        <span
+                        <div
                           key={index}
-                          className={`inline-flex items-center gap-1.5 rounded-lg border ${color.border} ${color.bg} px-2.5 py-1 text-xs font-bold ${color.text} shadow-sm animate-in fade-in duration-150`}
+                          className={`inline-flex items-center gap-2 rounded-xl border ${color.border} ${color.bg} px-2.5 py-1.5 text-xs font-bold ${color.text} shadow-sm animate-in fade-in duration-150`}
                         >
-                          <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
-                          {player}
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePartyPlayer(index)}
-                            className="rounded hover:bg-white/10 p-0.5 text-slate-400 hover:text-white transition"
-                            title="Remove player"
+                          {/* Player Avatar Thumbnail with Camera Upload Action */}
+                          <div
+                            onClick={() => handleTriggerUploadPhoto(player)}
+                            className="relative group cursor-pointer h-7 w-7 rounded-full overflow-hidden border border-white/30 shrink-0 bg-slate-900 shadow"
+                            title={`Tap to upload custom photo for ${player}`}
                           >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
+                            <img
+                              src={avatarUrl}
+                              alt={player}
+                              className="h-full w-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                              <Camera className="h-3 w-3 text-white" />
+                            </div>
+                            {hasCustom && (
+                              <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black" title="Custom Photo Active" />
+                            )}
+                          </div>
+
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1">
+                              <span className="text-white text-xs">{player}</span>
+                              {hasCustom && (
+                                <span className="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded font-mono">
+                                  Custom
+                                </span>
+                              )}
+                            </div>
+                            {/* Nationality indicator matching the name */}
+                            <span className="text-[9px] text-slate-300/80 font-normal">
+                              {nationality.label}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 ml-1">
+                            <button
+                              type="button"
+                              onClick={() => handleTriggerUploadPhoto(player)}
+                              className="rounded p-1 text-slate-400 hover:text-amber-300 hover:bg-white/10 transition"
+                              title={`Upload custom photo for ${player}`}
+                            >
+                              <Camera className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePartyPlayer(index)}
+                              className="rounded hover:bg-white/10 p-1 text-slate-400 hover:text-white transition"
+                              title="Remove player"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
                       );
                     })}
 
