@@ -1,0 +1,978 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Film,
+  Sparkles,
+  Volume2,
+  VolumeX,
+  Mic,
+  Play,
+  Pause,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  Copy,
+  Share2,
+  RotateCcw,
+  Clapperboard,
+  Users,
+  ScrollText,
+  Flame,
+  CheckCircle2,
+  Crown,
+  RefreshCw,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
+import { soundEngine } from '../utils/soundEngine';
+import { getRealisticCharacterPhoto } from '../utils/characterAvatars';
+import {
+  getDefaultRealisticSceneImage,
+  CastMember,
+  ScriptLine,
+  PlotChoice,
+} from './CinematicSceneStage';
+
+interface StudioScriptPortraitViewProps {
+  genre: string;
+  tone: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  settingDescription: string;
+  audioCue: string;
+  cast: CastMember[];
+  scriptLines: ScriptLine[];
+  plotChoices: PlotChoice[];
+  isFinale: boolean;
+  finaleSummary?: string;
+  currentLineIndex: number;
+  onLineChange: (index: number) => void;
+  selectedVoteId: 'A' | 'B' | 'C' | null;
+  onSelectVote: (id: 'A' | 'B' | 'C') => void;
+  voteCounts: { A?: number; B?: number; C?: number };
+  onLockInVoteAndBranch: () => void;
+  isBranchingChapter: boolean;
+  onResetToLobby: () => void;
+  playerColorStyles: { bg: string; text: string; border: string; badge: string }[];
+}
+
+export function StudioScriptPortraitView({
+  genre,
+  tone,
+  chapterNumber,
+  chapterTitle,
+  settingDescription,
+  audioCue,
+  cast,
+  scriptLines,
+  plotChoices,
+  isFinale,
+  finaleSummary,
+  currentLineIndex,
+  onLineChange,
+  selectedVoteId,
+  onSelectVote,
+  voteCounts,
+  onLockInVoteAndBranch,
+  isBranchingChapter,
+  onResetToLobby,
+  playerColorStyles,
+}: StudioScriptPortraitViewProps) {
+  // Mode toggle inside studio script: TikTok Live Teleprompter vs Full Screenplay Sheet
+  const [viewSubMode, setViewSubMode] = useState<'tiktok' | 'screenplay'>('tiktok');
+
+  // Scene & Character Image State
+  const [sceneImageUrl, setSceneImageUrl] = useState<string>(() =>
+    getDefaultRealisticSceneImage(genre, chapterNumber)
+  );
+  const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<boolean>(false);
+  const [characterPortraits, setCharacterPortraits] = useState<Record<string, string>>({});
+
+  // Audio & Playback Controls
+  const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false);
+  const [isSpeakingCurrentLine, setIsSpeakingCurrentLine] = useState<boolean>(false);
+  const [isPlayingAudioCue, setIsPlayingAudioCue] = useState<boolean>(false);
+  const [isSoundMuted, setIsSoundMuted] = useState<boolean>(false);
+  const [soundEffectStamp, setSoundEffectStamp] = useState<string | null>(null);
+  const [copiedCut, setCopiedCut] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [showCastDrawer, setShowCastDrawer] = useState<boolean>(false);
+
+  const autoPlayTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Generate realistic character portraits
+  const fetchCharacterPortraits = useCallback(() => {
+    if (cast.length === 0) return;
+    const newPortraits: Record<string, string> = {};
+    for (const member of cast) {
+      newPortraits[member.player.toLowerCase()] = getRealisticCharacterPhoto(
+        member.player,
+        member.role,
+        genre
+      );
+    }
+    setCharacterPortraits(newPortraits);
+  }, [cast, genre]);
+
+  // Load realistic scene photo & portraits on chapter change
+  useEffect(() => {
+    setSceneImageUrl(getDefaultRealisticSceneImage(genre, chapterNumber));
+    fetchCharacterPortraits();
+  }, [chapterNumber, genre, fetchCharacterPortraits]);
+
+  // Regenerate realistic scene image via backend AI
+  const handleRegenerateScene = async () => {
+    setIsGeneratingSceneImage(true);
+    try {
+      const res = await fetch('/api/sceneswap/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          genre,
+          tone,
+          setting_description: settingDescription,
+          chapter_number: chapterNumber,
+          chapter_title: chapterTitle,
+          type: 'scene',
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.imageUrl) {
+          setSceneImageUrl(data.imageUrl);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to regenerate scene image:', err);
+    } finally {
+      setIsGeneratingSceneImage(false);
+    }
+  };
+
+  // Current line details
+  const currentItem = scriptLines[currentLineIndex] || scriptLines[0];
+  const totalLines = scriptLines.length;
+  const isLastLine = currentLineIndex >= totalLines - 1;
+
+  const currentSpeakerIdx = currentItem
+    ? cast.findIndex((c) => c.player.toLowerCase() === currentItem.speaker.toLowerCase())
+    : 0;
+  const speakerIndexSafe = currentSpeakerIdx >= 0 ? currentSpeakerIdx : 0;
+  const currentStyle = playerColorStyles[speakerIndexSafe % playerColorStyles.length];
+  const currentCastMember = cast.find(
+    (c) => c.player.toLowerCase() === currentItem?.speaker.toLowerCase()
+  );
+
+  // Sound stamp trigger
+  const handleTriggerStamp = (type: 'vine' | 'sting' | 'scratch' | 'boing' | 'thunder', label: string) => {
+    setSoundEffectStamp(label);
+    if (type === 'vine') soundEngine.playVineBoom();
+    else if (type === 'sting') soundEngine.playSuspenseSting();
+    else if (type === 'scratch') soundEngine.playRecordScratch();
+    else if (type === 'boing') soundEngine.playComedicBoing();
+    else if (type === 'thunder') soundEngine.playThunder();
+
+    setTimeout(() => setSoundEffectStamp(null), 1300);
+  };
+
+  // Play atmospheric audio cue
+  const handlePlaySceneCue = () => {
+    setIsPlayingAudioCue(true);
+    soundEngine.playAudioCueForText(audioCue);
+    setSoundEffectStamp('🎧 ATMOS CUE');
+    setTimeout(() => {
+      setIsPlayingAudioCue(false);
+      setSoundEffectStamp(null);
+    }, 1800);
+  };
+
+  // Read current line aloud
+  const handleSpeakCurrentLine = () => {
+    if (!currentItem) return;
+    if (isSpeakingCurrentLine) {
+      soundEngine.stopSpeaking();
+      setIsSpeakingCurrentLine(false);
+      return;
+    }
+
+    setIsSpeakingCurrentLine(true);
+    soundEngine.speakLine(currentItem.line, speakerIndexSafe, () => {
+      setIsSpeakingCurrentLine(false);
+    });
+  };
+
+  // Next Line Action
+  const handleNextLine = () => {
+    if (currentLineIndex < totalLines - 1) {
+      soundEngine.playDialogueBlip(1.0 + (currentLineIndex % 3) * 0.15);
+      onLineChange(currentLineIndex + 1);
+    } else {
+      soundEngine.playSuspenseSting();
+      setViewSubMode('screenplay');
+    }
+  };
+
+  // Prev Line Action
+  const handlePrevLine = () => {
+    if (currentLineIndex > 0) {
+      soundEngine.playDialogueBlip(0.9);
+      onLineChange(currentLineIndex - 1);
+    }
+  };
+
+  // Auto-Play Cycle
+  useEffect(() => {
+    if (!isAutoPlaying) {
+      if (autoPlayTimerRef.current) clearInterval(autoPlayTimerRef.current);
+      return;
+    }
+
+    if (currentItem) {
+      soundEngine.speakLine(currentItem.line, speakerIndexSafe, () => {
+        autoPlayTimerRef.current = setTimeout(() => {
+          if (currentLineIndex < totalLines - 1) {
+            onLineChange(currentLineIndex + 1);
+          } else {
+            setIsAutoPlaying(false);
+            setViewSubMode('screenplay');
+          }
+        }, 1200);
+      });
+    }
+
+    return () => {
+      if (autoPlayTimerRef.current) clearTimeout(autoPlayTimerRef.current);
+    };
+  }, [isAutoPlaying, currentLineIndex, currentItem, speakerIndexSafe, totalLines, onLineChange]);
+
+  // Keyboard controls
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === ' ' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNextLine();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrevLine();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentLineIndex, totalLines]);
+
+  // Copy Director's Cut
+  const handleCopyDirectorsCut = () => {
+    const text = `🎬 [SCENESWAP DIRECTORS CUT - ACT ${chapterNumber}: ${chapterTitle}]\nGenre: ${genre} | Tone: ${tone}\nSetting: ${settingDescription}\n\nCAST ROLES:\n${cast.map((c) => `- ${c.player} as ${c.role} (${c.archetype})`).join('\n')}\n\nSCENE SCRIPT:\n${scriptLines.map((l) => `${l.speaker.toUpperCase()} ${l.direction ? `(${l.direction}) ` : ''}: "${l.line}"`).join('\n\n')}\n\n${isFinale ? `GRAND FINALE: ${finaleSummary || ''}` : `CHOICES:\n${plotChoices.map((p) => `[${p.id}] ${p.label}: ${p.description}`).join('\n')}`}`;
+
+    navigator.clipboard.writeText(text);
+    setCopiedCut(true);
+    soundEngine.playDialogueBlip(1.4);
+    setTimeout(() => setCopiedCut(false), 2000);
+  };
+
+  const totalVotes = (voteCounts.A || 0) + (voteCounts.B || 0) + (voteCounts.C || 0);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative w-full flex-1 flex flex-col rounded-2xl overflow-hidden border border-white/20 bg-black shadow-2xl transition-all duration-300 min-h-[580px] sm:min-h-[660px] h-full ${
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen w-screen min-h-screen' : ''
+      }`}
+    >
+      {/* =========================================================================
+          TIKTOK PORTRAIT BACKGROUND (9:16 VERTICAL REEL PHOTO COVERING THE STAGE)
+          ========================================================================= */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none select-none">
+        {sceneImageUrl ? (
+          <img
+            src={sceneImageUrl}
+            alt={settingDescription}
+            referrerPolicy="no-referrer"
+            className={`h-full w-full object-cover object-center filter contrast-[1.08] transition-all duration-700 ${
+              viewSubMode === 'screenplay'
+                ? 'brightness-[0.25] blur-sm scale-105'
+                : 'brightness-90 scale-100'
+            }`}
+          />
+        ) : (
+          <div className="h-full w-full bg-gradient-to-b from-slate-900 via-purple-950 to-black" />
+        )}
+
+        {/* TikTok Cinematic Film Lighting Vignettes */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/80" />
+        <div className="absolute inset-0 bg-radial-gradient from-transparent via-black/20 to-black/85" />
+        <div className="absolute inset-0 ring-1 ring-inset ring-white/10" />
+      </div>
+
+      {/* =========================================================================
+          TOP TIKTOK STATUS HEADER BAR
+          ========================================================================= */}
+      <div className="relative z-30 flex items-center justify-between p-3 sm:p-4 text-xs bg-gradient-to-b from-black/90 via-black/60 to-transparent backdrop-blur-[2px]">
+        {/* Left: TikTok Live Script Indicator & Sub-mode Switcher */}
+        <div className="flex items-center gap-2">
+          {/* Live Indicator Pill */}
+          <div className="flex items-center gap-1.5 rounded-full bg-black/80 px-2.5 py-1 border border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.35)] backdrop-blur-md">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+            </span>
+            <span className="font-black uppercase tracking-wider text-red-300 text-[10px]">
+              LIVE SCRIPT
+            </span>
+            <span className="text-white/30 text-[9px]">|</span>
+            <span className="font-bold uppercase tracking-wider text-amber-300 text-[10px]">
+              ACT 0{chapterNumber}
+            </span>
+          </div>
+
+          {/* Sub-mode Tab Selector: TikTok Reel vs Full Screenplay */}
+          <div className="flex rounded-lg bg-black/75 p-0.5 border border-white/15 backdrop-blur-md shadow-inner">
+            <button
+              type="button"
+              onClick={() => setViewSubMode('tiktok')}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold transition ${
+                viewSubMode === 'tiktok'
+                  ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <span>📱 TikTok View</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewSubMode('screenplay')}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold transition ${
+                viewSubMode === 'screenplay'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <ScrollText className="h-3 w-3" />
+              <span>Full Script</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Right: Audio Cue, Mute, Fullscreen */}
+        <div className="flex items-center gap-1.5">
+          {/* Atmos Cue Button */}
+          <button
+            type="button"
+            onClick={handlePlaySceneCue}
+            title="Play atmospheric soundscape cue"
+            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold border backdrop-blur-md transition active:scale-95 ${
+              isPlayingAudioCue
+                ? 'bg-amber-400 text-slate-950 border-amber-300 ring-2 ring-amber-300/50'
+                : 'bg-black/70 text-amber-300 hover:text-white border-amber-500/30'
+            }`}
+          >
+            <Volume2 className={`h-3 w-3 ${isPlayingAudioCue ? 'animate-bounce' : ''}`} />
+            <span className="hidden sm:inline font-mono">Cue</span>
+          </button>
+
+          {/* Audio Mute Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              const newMute = !isSoundMuted;
+              setIsSoundMuted(newMute);
+              soundEngine.setMuted(newMute);
+            }}
+            title={isSoundMuted ? 'Unmute' : 'Mute'}
+            className="flex items-center rounded-lg bg-black/70 p-1.5 text-slate-300 hover:text-white border border-white/15 backdrop-blur-md transition active:scale-95"
+          >
+            {isSoundMuted ? <VolumeX className="h-3.5 w-3.5 text-rose-400" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-400" />}
+          </button>
+
+          {/* Re-render Scene Photo */}
+          <button
+            type="button"
+            onClick={handleRegenerateScene}
+            disabled={isGeneratingSceneImage}
+            title="Regenerate realistic scene photo"
+            className="flex items-center rounded-lg bg-black/70 p-1.5 text-slate-300 hover:text-white border border-white/15 backdrop-blur-md transition active:scale-95"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isGeneratingSceneImage ? 'animate-spin text-amber-400' : ''}`} />
+          </button>
+
+          {/* Fullscreen Button */}
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            title="Toggle fullscreen"
+            className="flex items-center rounded-lg bg-black/70 p-1.5 text-slate-300 hover:text-white border border-white/15 backdrop-blur-md transition active:scale-95"
+          >
+            {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Visual Reaction Sound Stamp (TikTok Pop Sticker) */}
+      {soundEffectStamp && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none animate-in zoom-in-75 fade-in duration-150">
+          <div className="rotate-[-4deg] rounded-2xl border-4 border-yellow-300 bg-red-600/95 px-6 py-3 shadow-[0_0_50px_rgba(234,179,8,0.9)] backdrop-blur-xl">
+            <p className="text-xl sm:text-3xl font-black italic tracking-widest text-white uppercase drop-shadow-[0_2px_8px_rgba(0,0,0,1)]">
+              💥 {soundEffectStamp} 💥
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TIKTOK RIGHT-SIDE FLOATING ACTION RAIL (SOUNDBOARD & REACTIONS)
+          ========================================================================= */}
+      {viewSubMode === 'tiktok' && (
+        <div className="absolute right-2.5 sm:right-3.5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-2.5">
+          {/* Active Speaking Character Avatar Bubble */}
+          {currentCastMember && (
+            <div className="flex flex-col items-center group">
+              <div
+                className={`relative h-12 w-12 sm:h-14 sm:w-14 rounded-full overflow-hidden border-2 ${currentStyle.border} shadow-[0_0_16px_rgba(0,0,0,0.8)] ring-2 ring-amber-400/50 bg-black`}
+              >
+                <img
+                  src={
+                    characterPortraits[currentCastMember.player.toLowerCase()] ||
+                    getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre)
+                  }
+                  alt={currentCastMember.player}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover object-top"
+                />
+                <span className="absolute bottom-0 inset-x-0 bg-red-600 text-[7px] font-black uppercase text-white text-center py-0.2">
+                  LIVE
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-white text-center mt-1 drop-shadow max-w-[50px] truncate">
+                {currentCastMember.player}
+              </span>
+            </div>
+          )}
+
+          {/* Quick Sound FX Reaction Buttons (TikTok Style Circular Badges) */}
+          <button
+            type="button"
+            onClick={() => handleTriggerStamp('vine', 'VINE BOOM!')}
+            title="Vine Boom FX"
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-red-600/80 border border-white/20 hover:border-red-400 flex items-center justify-center text-sm shadow-lg backdrop-blur-md transition">
+              ⚡
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-amber-300 drop-shadow">
+              Boom
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTriggerStamp('sting', 'DUN DUN DUN!')}
+            title="Suspense Sting"
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-purple-600/80 border border-white/20 hover:border-purple-400 flex items-center justify-center text-sm shadow-lg backdrop-blur-md transition">
+              🎻
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-purple-300 drop-shadow">
+              Sting
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTriggerStamp('scratch', '*SCRATCH*')}
+            title="Record Scratch"
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-pink-600/80 border border-white/20 hover:border-pink-400 flex items-center justify-center text-sm shadow-lg backdrop-blur-md transition">
+              💿
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-pink-300 drop-shadow">
+              Scratch
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTriggerStamp('boing', 'BOING!')}
+            title="Comedic Boing"
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-amber-600/80 border border-white/20 hover:border-amber-400 flex items-center justify-center text-sm shadow-lg backdrop-blur-md transition">
+              🤪
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-amber-300 drop-shadow">
+              Boing
+            </span>
+          </button>
+
+          {/* Voice Line / TTS Button */}
+          <button
+            type="button"
+            onClick={handleSpeakCurrentLine}
+            title={isSpeakingCurrentLine ? 'Stop Voice' : 'Speak Dialogue Aloud'}
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div
+              className={`h-9 w-9 rounded-full flex items-center justify-center shadow-lg backdrop-blur-md transition border ${
+                isSpeakingCurrentLine
+                  ? 'bg-rose-500 border-rose-300 text-white animate-pulse'
+                  : 'bg-black/75 hover:bg-emerald-600/80 border-white/20 text-emerald-300'
+              }`}
+            >
+              <Mic className="h-4 w-4" />
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-emerald-300 drop-shadow">
+              {isSpeakingCurrentLine ? 'Voicing' : 'Voice'}
+            </span>
+          </button>
+
+          {/* Cast Dossier Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowCastDrawer(!showCastDrawer)}
+            title="Cast roles & secrets"
+            className="flex flex-col items-center gap-0.5 group active:scale-90 transition"
+          >
+            <div className="h-9 w-9 rounded-full bg-black/75 hover:bg-indigo-600/80 border border-white/20 hover:border-indigo-400 flex items-center justify-center text-indigo-300 shadow-lg backdrop-blur-md transition">
+              <Users className="h-4 w-4" />
+            </div>
+            <span className="text-[8px] font-bold text-slate-300 group-hover:text-indigo-300 drop-shadow">
+              Cast
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW A: TIKTOK LIVE TELEPROMPTER VIEW (FILLS SCREEN DOWN TO BOTTOM)
+          ========================================================================= */}
+      {viewSubMode === 'tiktok' ? (
+        <div className="relative z-20 flex-1 flex flex-col justify-end p-3 sm:p-5 overflow-hidden">
+          {/* Setting & Chapter Pill Floating at Upper-Mid */}
+          <div className="mb-auto pt-1 pointer-events-none max-w-[78%]">
+            <h2 className="text-base sm:text-xl font-black text-white drop-shadow-[0_2px_8px_rgba(0,0,0,1)] tracking-tight">
+              {chapterTitle}
+            </h2>
+            <p className="text-[11px] text-amber-200/90 font-medium italic drop-shadow-[0_1px_4px_rgba(0,0,0,1)] line-clamp-2 mt-0.5">
+              📍 {settingDescription}
+            </p>
+          </div>
+
+          {/* Floating Cast Members Drawer if open */}
+          {showCastDrawer && (
+            <div className="mb-3 rounded-2xl border border-white/20 bg-black/85 p-3 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[85%]">
+              <div className="flex items-center justify-between mb-2 pb-1 border-b border-white/10">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1">
+                  <Users className="h-3 w-3" />
+                  Active Cast Dossier
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCastDrawer(false)}
+                  className="text-[10px] text-slate-400 hover:text-white"
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {cast.map((member, i) => {
+                  const style = playerColorStyles[i % playerColorStyles.length];
+                  return (
+                    <div key={i} className={`p-1.5 rounded-lg border ${style.border} ${style.bg} text-[10px]`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white">{member.player}</span>
+                        <span className={style.text}>{member.role}</span>
+                      </div>
+                      <p className="text-slate-300 italic text-[9px] mt-0.5">&ldquo;{member.motivation}&rdquo;</p>
+                      {member.secret && (
+                        <p className="text-amber-300 text-[8px] mt-0.5">🔒 {member.secret}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TikTok Bottom Subtitle Card & Teleprompter Stage */}
+          <div className="w-full space-y-2.5 max-w-[88%] sm:max-w-full">
+            {/* Speaker Tag, Role, Direction */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider border shadow-md ${currentStyle.border} ${currentStyle.bg} ${currentStyle.text}`}>
+                {currentItem?.speaker}
+              </span>
+
+              {currentCastMember && (
+                <span className="text-[11px] font-bold text-white drop-shadow">
+                  as <span className="text-amber-300">{currentCastMember.role}</span>
+                </span>
+              )}
+
+              {currentItem?.direction && (
+                <span className="text-[10px] text-amber-200/90 italic font-serif bg-black/60 px-2 py-0.5 rounded-md border border-white/10 backdrop-blur-sm">
+                  {currentItem.direction}
+                </span>
+              )}
+            </div>
+
+            {/* The TikTok Subtitle Box: Large High-Legibility Typography */}
+            <div
+              onClick={handleNextLine}
+              className="cursor-pointer group relative rounded-2xl bg-black/85 hover:bg-black/95 p-4 sm:p-5 border border-white/20 shadow-[0_0_30px_rgba(0,0,0,0.8)] backdrop-blur-xl transition duration-200 select-none"
+            >
+              <p className="text-base sm:text-xl font-bold leading-relaxed text-white drop-shadow-md tracking-tight">
+                &ldquo;{currentItem?.line}&rdquo;
+              </p>
+              <div className="flex items-center justify-between pt-2 mt-1 border-t border-white/10 text-[10px] text-slate-400">
+                <span className="font-mono text-amber-300 font-bold">
+                  Line {currentLineIndex + 1} of {totalLines}
+                </span>
+                <span className="group-hover:text-amber-300 transition text-[9px]">
+                  Tap to advance ➔
+                </span>
+              </div>
+            </div>
+
+            {/* Navigation & Controls Row */}
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              <div className="flex items-center gap-1.5">
+                {/* Prev Button */}
+                <button
+                  type="button"
+                  onClick={handlePrevLine}
+                  disabled={currentLineIndex === 0}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-black/75 text-slate-200 border border-white/15 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none transition active:scale-95 shadow"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Prev</span>
+                </button>
+
+                {/* Auto Play */}
+                <button
+                  type="button"
+                  onClick={() => setIsAutoPlaying(!isAutoPlaying)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition active:scale-95 shadow ${
+                    isAutoPlaying
+                      ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white border-amber-400 shadow-amber-500/30'
+                      : 'bg-black/75 text-slate-200 border-white/15 hover:bg-white/10'
+                  }`}
+                >
+                  {isAutoPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  <span>{isAutoPlaying ? 'Pause' : 'Auto'}</span>
+                </button>
+              </div>
+
+              {/* Next Line / Finale Button */}
+              <button
+                type="button"
+                onClick={handleNextLine}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition shadow-lg active:scale-95 ${
+                  isLastLine
+                    ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white border border-pink-400 hover:brightness-110 shadow-pink-500/30'
+                    : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 hover:brightness-110 shadow-amber-500/20'
+                }`}
+              >
+                <span>{isLastLine ? 'Act Vote ➔' : 'Next ➔'}</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* Line Progress Tracker Bar */}
+            <div className="w-full flex items-center gap-1 pt-1">
+              {scriptLines.map((_, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => onLineChange(idx)}
+                  className={`h-1.5 flex-1 rounded-full cursor-pointer transition-all duration-300 ${
+                    idx === currentLineIndex
+                      ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] scale-y-125'
+                      : idx < currentLineIndex
+                      ? 'bg-purple-500/70'
+                      : 'bg-white/20 hover:bg-white/40'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* =========================================================================
+            VIEW B: COMPLETE SCREENPLAY SCRIPT & DOSSIER (OPTIMIZED TO FILL SCREEN DOWN)
+            ========================================================================= */
+        <div className="relative z-20 flex-1 flex flex-col p-3 sm:p-5 overflow-y-auto space-y-4">
+          {/* Header Banner */}
+          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                ACT {chapterNumber} • {genre}
+              </span>
+              <h3 className="text-base sm:text-lg font-black text-white">
+                {chapterTitle}
+              </h3>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleCopyDirectorsCut}
+                className="flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-xs text-slate-300 hover:text-white border border-white/15 transition active:scale-95"
+              >
+                <Share2 className="h-3 w-3" />
+                <span>{copiedCut ? 'Copied Cut!' : "Director's Cut"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onResetToLobby}
+                className="flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-xs text-slate-300 hover:text-white border border-white/15 transition active:scale-95"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Lobby</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Cast Roles Badges Strip */}
+          <div className="rounded-xl border border-white/10 bg-black/60 p-3 backdrop-blur-md">
+            <div className="flex items-center justify-between mb-2">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                <Users className="h-3 w-3 text-indigo-400" />
+                Cast Roles & Secrets ({cast.length} Actors)
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {cast.map((member, i) => {
+                const color = playerColorStyles[i % playerColorStyles.length];
+                return (
+                  <div key={i} className={`rounded-lg border ${color.border} ${color.bg} p-2 text-xs backdrop-blur-sm`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white flex items-center gap-1">
+                        <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
+                        {member.player}
+                      </span>
+                      <span className={`text-[10px] font-medium ${color.text}`}>{member.role}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-300 mt-0.5 italic">
+                      &ldquo;{member.motivation}&rdquo;
+                    </p>
+                    {member.secret && (
+                      <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">
+                        🔒 Secret: {member.secret}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Screenplay Dialogue Prompter View */}
+          <div className="rounded-xl border border-white/10 bg-black/85 p-4 font-mono text-xs space-y-3 shadow-xl backdrop-blur-md">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <p className="flex items-center gap-1.5 text-[11px] font-sans font-semibold uppercase tracking-wider text-purple-300">
+                <ScrollText className="h-3.5 w-3.5 text-purple-400" />
+                Complete Screenplay Script
+              </p>
+              <span className="text-[10px] text-slate-400 font-sans">
+                Tap any line to jump
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {scriptLines.map((item, idx) => {
+                const playerIndex = cast.findIndex((c) => c.player.toLowerCase() === item.speaker.toLowerCase());
+                const playerColor = playerColorStyles[(playerIndex >= 0 ? playerIndex : 0) % playerColorStyles.length];
+                const isCurrent = idx === currentLineIndex;
+
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      onLineChange(idx);
+                      soundEngine.playDialogueBlip(1.1);
+                    }}
+                    className={`cursor-pointer rounded-lg p-2.5 transition-all border ${
+                      isCurrent
+                        ? 'border-amber-400 bg-amber-500/15 ring-1 ring-amber-400/40 shadow'
+                        : 'border-transparent hover:border-white/15 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="space-y-0.5 border-l-2 border-indigo-500/50 pl-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[11px] font-bold uppercase tracking-wider block ${playerColor.text}`}>
+                          {item.speaker} {isCurrent && <span className="text-amber-400 text-[10px] ml-1">● Current Line</span>}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            soundEngine.speakLine(item.line, playerIndex >= 0 ? playerIndex : 0);
+                          }}
+                          className="text-[9px] text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-white/5"
+                        >
+                          🔊 Read
+                        </button>
+                      </div>
+                      {item.direction && (
+                        <span className="text-[10px] text-amber-200/80 italic block font-sans">
+                          {item.direction}
+                        </span>
+                      )}
+                      <p className="text-slate-100 text-xs leading-relaxed font-sans pt-0.5">
+                        &ldquo;{item.line}&rdquo;
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Choice Matrix Voting Hub or Grand Finale Card */}
+          {isFinale ? (
+            <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-950/60 via-purple-950/40 to-black p-4 text-center space-y-3 shadow-[0_0_30px_rgba(251,191,36,0.25)]">
+              <div className="flex items-center justify-center gap-1.5 text-amber-300 text-xs font-bold uppercase tracking-widest">
+                <Crown className="h-4 w-4 text-amber-400" />
+                Grand Finale Climax Resolution
+              </div>
+              <p className="text-xs text-amber-100/90 leading-relaxed font-sans italic px-2">
+                &ldquo;{finaleSummary}&rdquo;
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCopyDirectorsCut}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-3 py-2.5 text-xs font-bold text-slate-950 shadow-lg hover:brightness-110 active:scale-95 transition"
+                >
+                  <Copy className="h-3.5 w-3.5 text-slate-950" />
+                  <span>{copiedCut ? "Copied Director's Cut!" : 'Copy Complete Screenplay'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onResetToLobby}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-white/10 active:scale-95 transition"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  New Shoot
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-b from-purple-950/60 via-indigo-950/30 to-black p-4 space-y-3 shadow-lg">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Flame className="h-4 w-4 text-pink-400" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-purple-200">
+                    Choice Matrix Voting Hub
+                  </span>
+                </div>
+                <span className="text-[10px] text-indigo-300 font-medium">
+                  Vote for Act {chapterNumber + 1}
+                </span>
+              </div>
+
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                How will your crew react to this twist? Cast your vote:
+              </p>
+
+              <div className="space-y-2">
+                {plotChoices.map((choice) => {
+                  const isSelected = selectedVoteId === choice.id;
+                  const votes = voteCounts[choice.id] || 0;
+                  const votePercent = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
+                  const choiceEmojis: Record<string, string> = {
+                    A: '🔥 Chaos Move',
+                    B: '🕵️ Coverup Gambit',
+                    C: '🤯 Plot Twist',
+                  };
+
+                  return (
+                    <div
+                      key={choice.id}
+                      onClick={() => {
+                        onSelectVote(choice.id);
+                        soundEngine.playDialogueBlip(1.2);
+                      }}
+                      className={`relative overflow-hidden rounded-xl border p-3 transition select-none cursor-pointer ${
+                        isSelected
+                          ? 'border-purple-400 bg-purple-950/70 shadow-[0_0_20px_rgba(168,85,247,0.35)] ring-1 ring-purple-400/50'
+                          : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                      }`}
+                    >
+                      {totalVotes > 0 && (
+                        <div
+                          className="absolute bottom-0 left-0 top-0 bg-purple-500/15 transition-all duration-300 pointer-events-none"
+                          style={{ width: `${votePercent}%` }}
+                        />
+                      )}
+
+                      <div className="relative flex items-start justify-between gap-2 z-10">
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                                isSelected ? 'bg-purple-500 text-white shadow' : 'bg-white/10 text-slate-300'
+                              }`}
+                            >
+                              Option {choice.id}
+                            </span>
+                            <span className="text-[10px] font-bold text-pink-300">
+                              {choiceEmojis[choice.id] || ''}
+                            </span>
+                            <h4 className="text-xs font-bold text-white">{choice.label}</h4>
+                          </div>
+                          <p className="text-[11px] text-slate-200 leading-snug">
+                            {choice.description}
+                          </p>
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <p className="text-[10px] text-amber-300/90 italic font-sans">
+                              ⚡ Consequence: {choice.consequence_hint}
+                            </p>
+                            {totalVotes > 0 && (
+                              <span className="text-[10px] font-mono font-bold text-purple-300 ml-auto">
+                                {votePercent}% of cast
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Lock-In & Branch CTA */}
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playVineBoom();
+                    onLockInVoteAndBranch();
+                  }}
+                  disabled={!selectedVoteId || isBranchingChapter}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white shadow-xl hover:brightness-110 disabled:opacity-40 disabled:pointer-events-none transition active:scale-95 shadow-purple-500/30"
+                >
+                  {isBranchingChapter ? (
+                    <>
+                      <Sparkles className="h-4 w-4 animate-spin" />
+                      <span>Directing Act {chapterNumber + 1}...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Lock In Option {selectedVoteId || 'A'} & Branch</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

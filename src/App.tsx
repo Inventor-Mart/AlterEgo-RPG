@@ -49,6 +49,7 @@ import {
   Database,
 } from 'lucide-react';
 import { SceneIllustration } from './components/SceneIllustration';
+import { StudioScriptPortraitView } from './components/StudioScriptPortraitView';
 import { ComicPanelViewer } from './components/ComicPanelViewer';
 import { CinematicSceneStage } from './components/CinematicSceneStage';
 import { AuthModal } from './components/AuthModal';
@@ -2673,7 +2674,7 @@ export default function App() {
               )
             ) : activeChapter ? (
               /* FR-2.0 & FR-3.0: SCENESWAP MULTI-BRANCH SCREENPLAY & GRAPHIC NOVEL ENGINE */
-              <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="space-y-3 flex-1 flex flex-col min-h-full animate-in fade-in zoom-in-95 duration-200">
                 {/* Top Control Bar with Act Tracker, Audio Toggle, Mode Switch */}
                 <div className="flex items-center justify-between border-b border-indigo-500/20 pb-2.5">
                   <div className="flex items-center gap-1.5">
@@ -2712,7 +2713,7 @@ export default function App() {
                       className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-950/30 px-2.5 py-1 text-[10px] font-bold text-amber-300 hover:bg-amber-900/40 transition active:scale-95"
                     >
                       <Film className="h-3 w-3 text-amber-400" />
-                      {activeScriptMode === 'comic' ? '📜 Studio Script' : '🎬 Realistic Novel Stage'}
+                      {activeScriptMode === 'comic' ? '📱 Studio Script (TikTok)' : '🎬 Graphic Novel Stage'}
                     </button>
 
                     <button
@@ -2766,242 +2767,29 @@ export default function App() {
                     playerColorStyles={PLAYER_COLOR_STYLES}
                   />
                 ) : (
-                  /* SECONDARY VIEW: COMPLETE STUDIO SCREENPLAY SCRIPT & DOSSIER */
-                  <div className="space-y-4 animate-in fade-in duration-200">
-                    <SceneIllustration
-                      genre={activeChapter.genre}
-                      tone={activeChapter.tone}
-                      chapterNumber={activeChapter.chapter_number}
-                      chapterTitle={activeChapter.chapter_title}
-                      settingDescription={activeChapter.setting_description}
-                      audioCue={activeChapter.audio_cue}
-                      activeSpeaker={activeChapter.script_lines[currentLineIndex]?.speaker}
-                      activeLine={activeChapter.script_lines[currentLineIndex]?.line}
-                      castMembers={activeChapter.cast}
-                    />
-
-                    {/* Cast Roles Badges Strip */}
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
-                          <Users className="h-3 w-3 text-indigo-400" />
-                          Cast Roles & Secrets
-                        </p>
-                        <span className="text-[10px] text-slate-400">
-                          {activeChapter.cast.length} Actors Cast
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {activeChapter.cast.map((member, i) => {
-                          const color = PLAYER_COLOR_STYLES[i % PLAYER_COLOR_STYLES.length];
-                          return (
-                            <div key={i} className={`rounded-lg border ${color.border} ${color.bg} p-2 text-xs`}>
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-white flex items-center gap-1">
-                                  <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
-                                  {member.player}
-                                </span>
-                                <span className={`text-[10px] font-medium ${color.text}`}>{member.role}</span>
-                              </div>
-                              <p className="text-[10px] text-slate-300 mt-0.5 italic">
-                                &ldquo;{member.motivation}&rdquo;
-                              </p>
-                              {member.secret && (
-                                <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">
-                                  🔒 Secret: {member.secret}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Studio Screenplay Dialogue View */}
-                    <div className="rounded-xl border border-white/10 bg-slate-900/95 p-4 font-mono text-xs space-y-3">
-                      <p className="flex items-center gap-1.5 text-[11px] font-sans font-semibold uppercase tracking-wider text-purple-300 border-b border-white/10 pb-2">
-                        <ScrollText className="h-3.5 w-3.5 text-purple-400" />
-                        Complete Screenplay Script
-                      </p>
-                      <div className="space-y-3">
-                        {activeChapter.script_lines.map((item, idx) => {
-                          const playerIndex = activeChapter.cast.findIndex((c) => c.player.toLowerCase() === item.speaker.toLowerCase());
-                          const playerColor = PLAYER_COLOR_STYLES[(playerIndex >= 0 ? playerIndex : 0) % PLAYER_COLOR_STYLES.length];
-
-                          return (
-                            <div key={idx} className="space-y-0.5 border-l-2 border-indigo-500/50 pl-3">
-                              <span className={`text-[11px] font-bold uppercase tracking-wider block ${playerColor.text}`}>
-                                {item.speaker}
-                              </span>
-                              {item.direction && (
-                                <span className="text-[10px] text-amber-200/80 italic block font-sans">
-                                  {item.direction}
-                                </span>
-                              )}
-                              <p className="text-slate-100 text-xs leading-relaxed font-sans pt-0.5">
-                                &ldquo;{item.line}&rdquo;
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Studio Screenplay Choice Matrix & Copy Footer */}
-                    {activeChapter.is_finale ? (
-                      /* Grand Finale Resolution Card */
-                      <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-950/40 via-purple-950/30 to-black p-4 text-center space-y-3 shadow-[0_0_30px_rgba(251,191,36,0.25)]">
-                        <div className="flex items-center justify-center gap-1.5 text-amber-300 text-xs font-bold uppercase tracking-widest">
-                          <Crown className="h-4 w-4 text-amber-400" />
-                          Grand Finale Climax Resolution
-                        </div>
-                        <p className="text-xs text-amber-100/90 leading-relaxed font-sans italic px-2">
-                          &ldquo;{activeChapter.finale_summary}&rdquo;
-                        </p>
-                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={handleCopyDirectorsCut}
-                            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-3 py-2.5 text-xs font-bold text-slate-950 shadow-lg hover:brightness-110 active:scale-95 transition"
-                          >
-                            {copiedDirectorsCut ? <Check className="h-3.5 w-3.5 text-slate-950" /> : <Copy className="h-3.5 w-3.5" />}
-                            {copiedDirectorsCut ? 'Copied 3-Act Director\'s Cut!' : 'Copy Complete Screenplay'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleResetPartyShoot}
-                            className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-white/10 active:scale-95 transition"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                            New Shoot
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* Choice Matrix Voting Cards for Act 1 & Act 2 */
-                      <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-b from-purple-950/40 via-indigo-950/20 to-black/80 p-4 space-y-3 shadow-lg">
-                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                          <div className="flex items-center gap-1.5">
-                            <Flame className="h-4 w-4 text-pink-400" />
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-purple-200">
-                              Choice Matrix Voting Hub
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-indigo-300 font-medium">
-                            Vote for Act {activeChapter.chapter_number + 1}
-                          </span>
-                        </div>
-
-                        <p className="text-[11px] text-slate-300 leading-relaxed">
-                          How will your crew react to this twist? Each player tap to cast your vote:
-                        </p>
-
-                        <div className="space-y-2">
-                          {activeChapter.plot_choices.map((choice) => {
-                            const isSelected = selectedVoteId === choice.id;
-                            const votes = voteCounts[choice.id] || 0;
-                            const totalVotes = (voteCounts.A + voteCounts.B + voteCounts.C) || 0;
-                            const votePercent = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
-                            const choiceEmojis: Record<string, string> = { A: '🔥 Chaos Move', B: '🕵️ Coverup Gambit', C: '🤯 Plot Twist' };
-
-                            return (
-                              <div
-                                key={choice.id}
-                                className={`relative overflow-hidden rounded-xl border p-3 transition select-none ${
-                                  isSelected
-                                    ? 'border-purple-400 bg-purple-950/60 shadow-[0_0_20px_rgba(168,85,247,0.35)] ring-1 ring-purple-400/50'
-                                    : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
-                                }`}
-                              >
-                                {totalVotes > 0 && (
-                                  <div
-                                    className="absolute bottom-0 left-0 top-0 bg-purple-500/15 transition-all duration-300 pointer-events-none"
-                                    style={{ width: `${votePercent}%` }}
-                                  />
-                                )}
-
-                                <div className="relative flex items-start justify-between gap-2 z-10">
-                                  <div className="flex-1 space-y-1">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
-                                        isSelected ? 'bg-purple-500 text-white shadow' : 'bg-white/10 text-slate-300'
-                                      }`}>
-                                        Option {choice.id}
-                                      </span>
-                                      <span className="text-[10px] font-bold text-pink-300">
-                                        {choiceEmojis[choice.id] || ''}
-                                      </span>
-                                      <h4 className="text-xs font-bold text-white">
-                                        {choice.label}
-                                      </h4>
-                                    </div>
-                                    <p className="text-[11px] text-slate-200 leading-snug">
-                                      {choice.description}
-                                    </p>
-                                    <div className="flex items-center gap-2 pt-0.5">
-                                      <p className="text-[10px] text-amber-300/90 italic font-sans">
-                                        ⚡ Consequence: {choice.consequence_hint}
-                                      </p>
-                                      {totalVotes > 0 && (
-                                        <span className="text-[10px] font-mono font-bold text-purple-300 ml-auto">
-                                          {votePercent}% of cast
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleVoteChoice(choice.id)}
-                                    className={`shrink-0 flex flex-col items-center justify-center rounded-xl px-3 py-2 text-xs font-bold transition active:scale-95 ${
-                                      isSelected
-                                        ? 'bg-gradient-to-b from-purple-500 to-indigo-600 text-white shadow-lg ring-2 ring-purple-300'
-                                        : 'border border-white/10 bg-white/10 text-purple-200 hover:bg-white/20'
-                                    }`}
-                                  >
-                                    <span className="text-[9px] uppercase tracking-wider font-semibold">Vote</span>
-                                    <span className="text-sm font-extrabold">{votes}</span>
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Lock In Vote CTA */}
-                        <button
-                          type="button"
-                          disabled={isBranchingChapter}
-                          onClick={handleLockInVoteAndBranch}
-                          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-50"
-                        >
-                          {isBranchingChapter ? (
-                            <>
-                              <Sparkles className="h-3.5 w-3.5 animate-spin" />
-                              Director Is Rendering Act {activeChapter.chapter_number + 1}...
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-3.5 w-3.5" />
-                              Lock In Vote & Launch Act {activeChapter.chapter_number + 1} ➔
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Director's Cut Screenplay Export Footer */}
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleCopyDirectorsCut}
-                        className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-950/40 py-2.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-900/50 transition"
-                      >
-                        {copiedDirectorsCut ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        {copiedDirectorsCut ? 'Copied Director\'s Cut!' : 'Copy Screenplay to Clipboard'}
-                      </button>
-                    </div>
-                  </div>
+                  /* SECONDARY VIEW: COMPLETE STUDIO SCREENPLAY SCRIPT & DOSSIER (TIKTOK PORTRAIT & SCREEN-FILLING) */
+                  <StudioScriptPortraitView
+                    genre={activeChapter.genre}
+                    tone={activeChapter.tone}
+                    chapterNumber={activeChapter.chapter_number}
+                    chapterTitle={activeChapter.chapter_title}
+                    settingDescription={activeChapter.setting_description}
+                    audioCue={activeChapter.audio_cue}
+                    cast={activeChapter.cast}
+                    scriptLines={activeChapter.script_lines}
+                    plotChoices={activeChapter.plot_choices}
+                    isFinale={activeChapter.is_finale}
+                    finaleSummary={activeChapter.finale_summary}
+                    currentLineIndex={currentLineIndex}
+                    onLineChange={(idx) => setCurrentLineIndex(idx)}
+                    selectedVoteId={selectedVoteId}
+                    onSelectVote={(id) => setSelectedVoteId(id)}
+                    voteCounts={voteCounts}
+                    onLockInVoteAndBranch={handleLockInVoteAndBranch}
+                    isBranchingChapter={isBranchingChapter}
+                    onResetToLobby={handleResetPartyShoot}
+                    playerColorStyles={PLAYER_COLOR_STYLES}
+                  />
                 )}
               </div>
             ) : (
