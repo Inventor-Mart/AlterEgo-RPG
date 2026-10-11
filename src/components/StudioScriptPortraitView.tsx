@@ -36,6 +36,8 @@ import {
   lockOrGetCharacterVisualBible,
   extractPhysicalSceneAction,
   buildContinuityPromptBlock,
+  extractCharacterActionBeats,
+  generateDynamicSceneSvg,
 } from '../utils/characterConsistency';
 import {
   getDefaultRealisticSceneImage,
@@ -96,10 +98,12 @@ export function StudioScriptPortraitView({
   // Mode toggle inside studio script: TikTok Live Teleprompter vs Full Screenplay Sheet
   const [viewSubMode, setViewSubMode] = useState<'tiktok' | 'screenplay'>('tiktok');
 
-  // Scene & Character Image State
-  const [sceneImageUrl, setSceneImageUrl] = useState<string>(() =>
-    getDefaultRealisticSceneImage(genre, chapterNumber)
-  );
+  // Scene & Character Image State - dynamically generated to match exact scene heading and character actions
+  const [sceneImageUrl, setSceneImageUrl] = useState<string>(() => {
+    const visualBible = lockOrGetCharacterVisualBible(cast, genre, localCustomPhotos);
+    const actionBeats = extractCharacterActionBeats(scriptLines, cast, visualBible);
+    return generateDynamicSceneSvg(settingDescription, genre, actionBeats, '9:16');
+  });
   const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<boolean>(false);
   const [characterPortraits, setCharacterPortraits] = useState<Record<string, string>>({});
 
@@ -141,11 +145,19 @@ export function StudioScriptPortraitView({
     setCharacterPortraits(newPortraits);
   }, [cast, genre, localCustomPhotos]);
 
-  // Load realistic scene photo & portraits on chapter change or photo update
-  useEffect(() => {
-    setSceneImageUrl(getDefaultRealisticSceneImage(genre, chapterNumber));
-    fetchCharacterPortraits();
-  }, [chapterNumber, genre, fetchCharacterPortraits]);
+  // Current line details
+  const currentItem = scriptLines[currentLineIndex] || scriptLines[0];
+  const totalLines = scriptLines.length;
+  const isLastLine = currentLineIndex >= totalLines - 1;
+
+  const currentSpeakerIdx = currentItem
+    ? cast.findIndex((c) => c.player.toLowerCase() === currentItem.speaker.toLowerCase())
+    : 0;
+  const speakerIndexSafe = currentSpeakerIdx >= 0 ? currentSpeakerIdx : 0;
+  const currentStyle = playerColorStyles[speakerIndexSafe % playerColorStyles.length];
+  const currentCastMember = cast.find(
+    (c) => c.player.toLowerCase() === currentItem?.speaker.toLowerCase()
+  );
 
   // Handle triggering file upload for a specific player
   const triggerUploadFor = (playerName: string) => {
@@ -176,27 +188,19 @@ export function StudioScriptPortraitView({
     }
   };
 
-  // Current line details
-  const currentItem = scriptLines[currentLineIndex] || scriptLines[0];
-  const totalLines = scriptLines.length;
-  const isLastLine = currentLineIndex >= totalLines - 1;
-
-  const currentSpeakerIdx = currentItem
-    ? cast.findIndex((c) => c.player.toLowerCase() === currentItem.speaker.toLowerCase())
-    : 0;
-  const speakerIndexSafe = currentSpeakerIdx >= 0 ? currentSpeakerIdx : 0;
-  const currentStyle = playerColorStyles[speakerIndexSafe % playerColorStyles.length];
-  const currentCastMember = cast.find(
-    (c) => c.player.toLowerCase() === currentItem?.speaker.toLowerCase()
-  );
-
-  // Regenerate realistic scene image via backend AI with characters inside the scene!
-  const handleRegenerateScene = async () => {
+  // Regenerate realistic scene image via backend AI anchoring strictly on the SCENE HEADING
+  // and the CHARACTERS performing their actions & dialogues inside the room!
+  const handleRegenerateScene = useCallback(async () => {
     setIsGeneratingSceneImage(true);
     try {
       const visualBible = lockOrGetCharacterVisualBible(cast, genre, localCustomPhotos);
       const actionDesc = extractPhysicalSceneAction(settingDescription, scriptLines, chapterTitle);
       const continuityBlock = buildContinuityPromptBlock(visualBible, cast, actionDesc);
+      const actionBeats = extractCharacterActionBeats(scriptLines, cast, visualBible);
+
+      // Immediately display procedural dynamic scene matching the scene heading and actions
+      const immediateSvg = generateDynamicSceneSvg(settingDescription, genre, actionBeats, '9:16');
+      setSceneImageUrl(immediateSvg);
 
       const res = await fetch('/api/sceneswap/generate-image', {
         method: 'POST',
@@ -205,6 +209,7 @@ export function StudioScriptPortraitView({
           genre,
           tone,
           setting_description: settingDescription,
+          scene_heading: settingDescription,
           chapter_number: chapterNumber,
           chapter_title: chapterTitle,
           type: 'scene',
@@ -222,6 +227,7 @@ export function StudioScriptPortraitView({
               heritagePrompt: locked?.heritagePrompt,
             };
           }),
+          character_beats: actionBeats,
           characterConsistencyPrompt: continuityBlock,
           physicalActionPrompt: actionDesc,
           activeSpeaker: currentItem?.speaker,
@@ -240,7 +246,13 @@ export function StudioScriptPortraitView({
     } finally {
       setIsGeneratingSceneImage(false);
     }
-  };
+  }, [genre, tone, settingDescription, chapterNumber, chapterTitle, cast, currentItem, localCustomPhotos, scriptLines]);
+
+  // AUTOMATICALLY load scene visual matching the scene heading and character actions on chapter change!
+  useEffect(() => {
+    handleRegenerateScene();
+    fetchCharacterPortraits();
+  }, [chapterNumber, chapterTitle, settingDescription, handleRegenerateScene, fetchCharacterPortraits]);
 
   // Sound stamp trigger
   const handleTriggerStamp = (type: 'vine' | 'sting' | 'scratch' | 'boing' | 'thunder', label: string) => {

@@ -32,6 +32,8 @@ import {
   lockOrGetCharacterVisualBible,
   extractPhysicalSceneAction,
   buildContinuityPromptBlock,
+  extractCharacterActionBeats,
+  generateDynamicSceneSvg,
 } from '../utils/characterConsistency';
 
 export function getDefaultRealisticSceneImage(genre: string, chapter: number): string {
@@ -137,10 +139,15 @@ export function CinematicSceneStage({
   customPlayerPhotos = {},
   onUpdateCustomPhoto,
 }: CinematicSceneStageProps) {
-  // Scene Image State - Pre-populated with high-resolution photographic scene from 0ms
-  const [sceneImageUrl, setSceneImageUrl] = useState<string>(() =>
-    getDefaultRealisticSceneImage(genre, chapterNumber)
-  );
+  // Scene Image State - dynamically generated to match exact scene heading and character actions
+  const [sceneImageUrl, setSceneImageUrl] = useState<string>(() => {
+    const visualBible = lockOrGetCharacterVisualBible(cast, genre, {
+      ...getStoredCustomAvatars(),
+      ...customPlayerPhotos,
+    });
+    const actionBeats = extractCharacterActionBeats(scriptLines, cast, visualBible);
+    return generateDynamicSceneSvg(settingDescription, genre, actionBeats, '16:9');
+  });
   const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<boolean>(false);
   const [isAiGeneratedScene, setIsAiGeneratedScene] = useState<boolean>(false);
 
@@ -216,6 +223,11 @@ export function CinematicSceneStage({
       const visualBible = lockOrGetCharacterVisualBible(cast, genre, localCustomPhotos);
       const actionDesc = extractPhysicalSceneAction(settingDescription, scriptLines, chapterTitle);
       const continuityBlock = buildContinuityPromptBlock(visualBible, cast, actionDesc);
+      const actionBeats = extractCharacterActionBeats(scriptLines, cast, visualBible);
+
+      // Immediately display procedural dynamic scene matching the scene heading and actions
+      const immediateSvg = generateDynamicSceneSvg(settingDescription, genre, actionBeats, '16:9');
+      setSceneImageUrl(immediateSvg);
 
       const res = await fetch('/api/sceneswap/generate-image', {
         method: 'POST',
@@ -224,6 +236,7 @@ export function CinematicSceneStage({
           genre,
           tone,
           setting_description: settingDescription,
+          scene_heading: settingDescription,
           chapter_number: chapterNumber,
           chapter_title: chapterTitle,
           type: 'scene',
@@ -241,6 +254,7 @@ export function CinematicSceneStage({
               heritagePrompt: locked?.heritagePrompt,
             };
           }),
+          character_beats: actionBeats,
           characterConsistencyPrompt: continuityBlock,
           physicalActionPrompt: actionDesc,
           activeSpeaker: currentItem?.speaker,
@@ -277,11 +291,11 @@ export function CinematicSceneStage({
     setCharacterPortraits(newPortraits);
   }, [cast, genre, localCustomPhotos]);
 
-  // Load scene & character images on chapter change
+  // AUTOMATICALLY load scene visual matching the scene heading and character actions on chapter change!
   useEffect(() => {
-    setSceneImageUrl(getDefaultRealisticSceneImage(genre, chapterNumber));
+    fetchRealisticSceneImage();
     fetchCharacterPortraits();
-  }, [chapterNumber, genre, fetchCharacterPortraits]);
+  }, [chapterNumber, chapterTitle, settingDescription, fetchRealisticSceneImage, fetchCharacterPortraits]);
 
   // Current Line Details
   const totalLines = scriptLines.length;

@@ -1,4 +1,5 @@
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import { generateDynamicSceneSvg } from "../utils/characterConsistency";
 
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -1021,6 +1022,7 @@ export interface RealisticImageRequest {
   genre: string;
   tone?: string;
   setting_description: string;
+  scene_heading?: string;
   chapter_number?: number;
   chapter_title?: string;
   type?: 'scene' | 'character';
@@ -1035,6 +1037,14 @@ export interface RealisticImageRequest {
     props?: string;
     facialFeatures?: string;
     heritagePrompt?: string;
+  }>;
+  character_beats?: Array<{
+    player: string;
+    role: string;
+    action: string;
+    dialogue: string;
+    wardrobe?: string;
+    props?: string;
   }>;
   characterConsistencyPrompt?: string;
   physicalActionPrompt?: string;
@@ -1065,13 +1075,13 @@ export async function generateSceneSwapRealisticImage(
   const isCharacter = inputs.type === 'character';
   const genre = inputs.genre || 'Nollywood Drama';
   const tone = inputs.tone || 'Cinematic & Dramatic';
-  const setting = inputs.setting_description || 'Opulent Lagos Manor Hall';
+  const setting = inputs.scene_heading || inputs.setting_description || 'Opulent Lagos Manor Hall';
   const chapterNumber = inputs.chapter_number || 1;
 
   // Generate cache key
   const cacheKey = isCharacter && inputs.character
     ? `char:${inputs.character.player}:${inputs.character.role}:${genre}`
-    : `scene:${genre}:${chapterNumber}:${setting.slice(0, 40)}`;
+    : `scene:${genre}:${chapterNumber}:${setting.slice(0, 50)}`;
 
   if (imageCache.has(cacheKey)) {
     return imageCache.get(cacheKey)!;
@@ -1091,20 +1101,27 @@ export async function generateSceneSwapRealisticImage(
 
   const targetAspectRatio = inputs.aspectRatio === '16:9' ? '16:9' : '9:16';
 
-  // Build prominent character staging and consistency description inside the scene
-  const castListText = inputs.cast && inputs.cast.length > 0
+  // Build character actions and dialogue details
+  const characterActionsFormatted = inputs.character_beats && inputs.character_beats.length > 0
+    ? inputs.character_beats
+        .map((b) => {
+          const wardrobeTxt = b.wardrobe ? ` [Wearing locked wardrobe: ${b.wardrobe}]` : '';
+          const propsTxt = b.props ? ` [Props: ${b.props}]` : '';
+          return `- "${b.player}" as ${b.role}${wardrobeTxt}${propsTxt}:\n  PHYSICAL ACTION: ${b.action}\n  SPOKEN DIALOGUE IN SCENE: "${b.dialogue}"`;
+        })
+        .join('\n')
+    : inputs.cast && inputs.cast.length > 0
     ? inputs.cast
         .map((c) => {
           const wardrobeInfo = c.wardrobe ? ` wearing ${c.wardrobe}` : '';
           const propsInfo = c.props ? ` carrying/using ${c.props}` : '';
-          const heritageInfo = c.heritagePrompt ? ` [heritage: ${c.heritagePrompt}]` : '';
-          return `Character "${c.player}" as "${c.role}" (${c.archetype || 'Lead'})${heritageInfo}${wardrobeInfo}${propsInfo}`;
+          return `Character "${c.player}" as "${c.role}" (${c.archetype || 'Lead'})${wardrobeInfo}${propsInfo}`;
         })
         .join(', ')
     : 'The main ensemble cast members dressed in genre-authentic costumes';
 
   const activeFocusText = inputs.activeSpeaker
-    ? `Featuring ${inputs.activeSpeaker} in active mid-scene dialogue: "${inputs.activeLine || ''}".`
+    ? `Spotlight moment: ${inputs.activeSpeaker} is in active dialogue mid-delivery: "${inputs.activeLine || ''}".`
     : '';
 
   const consistencyDirective = inputs.characterConsistencyPrompt
@@ -1112,30 +1129,46 @@ export async function generateSceneSwapRealisticImage(
     : '';
 
   const actionDirective = inputs.physicalActionPrompt
-    ? `PHYSICAL ACTION & INTERACTION (GRAPHIC NOVEL / COMIC STYLE): ${inputs.physicalActionPrompt}`
-    : `PHYSICAL ACTION & INTERACTION: The characters are physically inside the setting interacting together and engaging with the environment (e.g. if fight scene, they are in dynamic combat; if confrontation, face-to-face clash; if celebration, raising glasses together).`;
+    ? `PRIMARY SCENE ACTION (GRAPHIC NOVEL / COMIC PANEL): ${inputs.physicalActionPrompt}`
+    : `PHYSICAL ACTION: The characters are physically inside the setting interacting together and engaging with the environment (e.g. if combat, they are actively fighting; if confrontation, facing each other with tense gestures; if celebration, raising glasses together).`;
 
   const prompt = targetAspectRatio === '9:16'
-    ? `Cinematic 9:16 vertical film still, full scene illustration, graphic novel cinematic splash art, 8k Arri Alexa 35 cinema capture. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}: "${inputs.chapter_title || ''}".
-CHARACTERS IN THE SCENE: ${castListText}.
+    ? `Cinematic 9:16 vertical film still, full scene graphic novel splash art, photorealistic 8k Arri Alexa 35 cinema capture.
+=== SCENE HEADING (PRIMARY VISUAL ARCHITECTURE) ===
+SCENE HEADING: "${setting}"
+MOVIE GENRE: "${genre}" | TONE: "${tone}" | ACT ${chapterNumber}: "${inputs.chapter_title || ''}"
+The entire environment, architecture, lighting, atmosphere, and room geometry MUST strictly depict the location and conditions in the SCENE HEADING above.
+
+=== CHARACTERS INSIDE THE SCENE: PHYSICAL ACTIONS & DIALOGUES ===
+${characterActionsFormatted}
+
 ${activeFocusText}
 ${actionDirective}
 ${consistencyDirective}
-CRITICAL RULES:
-- Characters MUST be physically drawn inside the environment interacting directly with each other and the setting like a graphic novel frame.
-- NO floating avatars, circular headshots, or separate profile bubbles.
-- Keep character wardrobe, facial look, hair, and props strictly consistent across all scenes.
-- Dynamic camera composition, volumetric lighting, rich color grade, cinematic masterpiece, no text, no captions, no watermarks.`
-    : `Cinematic wide 16:9 movie still, full scene graphic novel frame, 8k Arri Alexa 35 anamorphic lens. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}.
-CHARACTERS IN THE SCENE: ${castListText}.
+
+MANDATORY RULES:
+- The visuals must directly depict the exact SCENE HEADING "${setting}".
+- Characters MUST be physically drawn inside the environment performing these exact actions and dialogue moments together in the room.
+- NO floating avatars, NO circular headshots, NO speech bubbles, NO text overlays.
+- 100% full scene artwork where characters and setting are unified.`
+    : `Cinematic wide 16:9 movie still, full scene graphic novel frame, 8k Arri Alexa 35 anamorphic lens.
+=== SCENE HEADING (PRIMARY VISUAL ARCHITECTURE) ===
+SCENE HEADING: "${setting}"
+MOVIE GENRE: "${genre}" | TONE: "${tone}" | ACT ${chapterNumber}
+The entire environment and lighting MUST strictly depict the SCENE HEADING above.
+
+=== CHARACTERS INSIDE THE SCENE: PHYSICAL ACTIONS & DIALOGUES ===
+${characterActionsFormatted}
+
 ${activeFocusText}
 ${actionDirective}
 ${consistencyDirective}
-CRITICAL RULES:
-- Characters MUST be physically inside the environment interacting together like a graphic novel or film still.
-- NO floating avatars, circular headshots, or isolated portrait cards.
-- Keep character wardrobe, facial look, hair, and props strictly consistent across all scenes.
-- Masterful composition, dramatic lighting, no text, no watermarks, cinematic film still.`;
+
+MANDATORY RULES:
+- The visual environment must directly match the SCENE HEADING "${setting}".
+- Characters MUST be physically inside the environment interacting together based on their actions and dialogues.
+- NO floating avatars, NO isolated portrait cards, NO text overlays, NO speech bubbles.
+- Masterful composition, dramatic lighting, unified film still masterpiece.`;
 
   const ai = getGeminiClient();
   const isCooldown = Date.now() < imageQuotaCooldownUntil;
@@ -1180,8 +1213,8 @@ CRITICAL RULES:
       // Check for rate limit / quota exhaustion (429 RESOURCE_EXHAUSTED)
       const errStr = String(err?.message || err);
       if (err?.status === 'RESOURCE_EXHAUSTED' || errStr.includes('429') || errStr.includes('quota') || errStr.includes('limit: 0')) {
-        // Activate 1-hour circuit breaker to prevent repeated failed requests
-        imageQuotaCooldownUntil = Date.now() + 60 * 60 * 1000;
+        // Short 10s cooldown to allow quick recovery
+        imageQuotaCooldownUntil = Date.now() + 10 * 1000;
       }
     }
   }
@@ -1200,8 +1233,6 @@ CRITICAL RULES:
 
 export function getFallbackRealisticImage(inputs: RealisticImageRequest): string {
   const isCharacter = inputs.type === 'character';
-  const genre = inputs.genre || 'Nollywood Drama';
-  const chapter = Math.min(Math.max(inputs.chapter_number || 1, 1), 3);
 
   if (isCharacter) {
     const role = (inputs.character?.role || '').toLowerCase();
@@ -1218,41 +1249,14 @@ export function getFallbackRealisticImage(inputs: RealisticImageRequest): string
     return '/images/characters/socialite.jpg';
   }
 
-  // Realistic photographic scene film still backdrops
-  if (genre.includes('Sci-Fi')) {
-    if (chapter === 1) return '/images/scenes/scifi_act1.jpg';
-    if (chapter === 2) return '/images/scenes/scifi_act2.jpg';
-    return '/images/scenes/scifi_act3.jpg';
-  }
-
-  if (genre.includes('Afro') || genre.includes('Heist')) {
-    if (chapter === 1) return '/images/scenes/heist_act1.jpg';
-    if (chapter === 2) return '/images/scenes/heist_act2.jpg';
-    return '/images/scenes/heist_act3.jpg';
-  }
-
-  if (genre.includes('Horror')) {
-    if (chapter === 1) return '/images/scenes/horror_act1.jpg';
-    if (chapter === 2) return '/images/scenes/horror_act2.jpg';
-    return '/images/scenes/horror_act3.jpg';
-  }
-
-  if (genre.includes('Rom') || genre.includes('Comedy')) {
-    if (chapter === 1) return '/images/scenes/romcom_act1.jpg';
-    if (chapter === 2) return '/images/scenes/romcom_act2.jpg';
-    return '/images/scenes/romcom_act3.jpg';
-  }
-
-  if (genre.includes('Cyber') || genre.includes('Detective')) {
-    if (chapter === 1) return '/images/scenes/detective_act1.jpg';
-    if (chapter === 2) return '/images/scenes/detective_act2.jpg';
-    return '/images/scenes/detective_act3.jpg';
-  }
-
-  // Nollywood Drama default
-  if (chapter === 1) return '/images/scenes/nollywood_act1.jpg';
-  if (chapter === 2) return '/images/scenes/nollywood_act2.jpg';
-  return '/images/scenes/nollywood_act3.jpg';
+  // Dynamically generate an SVG scene illustration that directly matches the SCENE HEADING
+  // and the CHARACTERS performing their actions and dialogue inside the room!
+  return generateDynamicSceneSvg(
+    inputs.scene_heading || inputs.setting_description || 'INT. SCENE - LOCATION',
+    inputs.genre || 'Nollywood Drama',
+    inputs.character_beats || [],
+    inputs.aspectRatio === '16:9' ? '16:9' : '9:16'
+  );
 }
 
 function getRealisticSceneSvg(genre: string, chapter: number, settingDesc: string): string {
