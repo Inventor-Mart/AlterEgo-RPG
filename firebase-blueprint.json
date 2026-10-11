@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and subscription state",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique Firebase Authentication UID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "display_name": {
+          "type": "string",
+          "description": "Display name or spiritual moniker"
+        },
+        "is_sovereign_pro": {
+          "type": "boolean",
+          "description": "Whether user has unlocked Sovereign Pass"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "ISO timestamp of latest update"
+        }
+      },
+      "required": ["uid", "email"]
+    },
+    "AlterEgoCharacter": {
+      "title": "AlterEgoCharacter",
+      "description": "AlterEgo persona blueprint, chapter progress, quests, and XP",
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "Owner Firebase UID"
+        },
+        "full_name": {
+          "type": "string",
+          "description": "Character or user real name"
+        },
+        "current_profession": {
+          "type": "string",
+          "description": "Current real-world career or craft"
+        },
+        "decoded_purpose": {
+          "type": "string",
+          "description": "AI-decoded purpose blueprint"
+        },
+        "rpg_class": {
+          "type": "string",
+          "description": "Spiritual RPG class title"
+        },
+        "current_chapter": {
+          "type": "number",
+          "description": "Current chapter progression (1 to 4)"
+        },
+        "chapter_started_at": {
+          "type": "number",
+          "description": "Unix timestamp in ms when the current chapter started"
+        },
+        "prior_chapters_xp": {
+          "type": "number",
+          "description": "Accumulated base XP from prior chapters"
+        },
+        "is_sovereign_pro": {
+          "type": "boolean",
+          "description": "Active Sovereign Pass status"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "Latest update timestamp"
+        }
+      },
+      "required": ["user_id"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Top-level user profile keyed by Firebase Auth UID"
+    },
+    "/users/{userId}/alterego/character": {
+      "schema": "AlterEgoCharacter",
+      "description": "User AlterEgo character dossier, quests, and chapter state"
+    }
+  }
+}

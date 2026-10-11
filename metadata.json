@@ -1,0 +1,6 @@
+{
+  "name": "AlterEgo.RPG • Pathfinder",
+  "description": "Decode your divine Ikigai purpose with AlterEgo.RPG Pathfinder — your biblical archetype and RPG purpose ascension.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
