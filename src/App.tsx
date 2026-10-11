@@ -51,12 +51,14 @@ import {
 } from 'lucide-react';
 import {
   getRealisticCharacterPhoto,
-  detectNameNationality,
   getStoredCustomAvatars,
   setStoredCustomAvatar,
-  removeStoredCustomAvatar,
   compressImageFile,
 } from './utils/characterAvatars';
+import {
+  clearStoredVisualBible,
+  lockOrGetCharacterVisualBible,
+} from './utils/characterConsistency';
 import { SceneIllustration } from './components/SceneIllustration';
 import { StudioScriptPortraitView } from './components/StudioScriptPortraitView';
 import { ComicPanelViewer } from './components/ComicPanelViewer';
@@ -1525,6 +1527,11 @@ export default function App() {
 
       if (!res.ok) throw new Error('SceneSwap shoot failed');
       const data: SceneSwapChapterResult = await res.json();
+
+      // Reset and lock character visual bible for consistency across all acts
+      clearStoredVisualBible();
+      lockOrGetCharacterVisualBible(data.cast, selectedGenre, playerCustomPhotos);
+
       setActiveChapter(data);
       setChapterHistory([]);
       setCurrentLineIndex(0);
@@ -2863,11 +2870,11 @@ export default function App() {
                     Cast Your Hangout Into A 3-Act Branching Film
                   </h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Tag 2 to 5 friends, upload custom photos or use nationality-matched character portraits, and vote live after every act.
+                    Tag 2 to 5 friends, upload custom photos or use realistic character portraits, and vote live after every act.
                   </p>
                 </div>
 
-                {/* FR-1.0: Interactive Tag/Chip Input Box for Players with Avatars & Nationality */}
+                {/* FR-1.0: Interactive Tag/Chip Input Box for Players with Avatars */}
                 <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md">
                   <div className="flex items-center justify-between">
                     <label className={labelClass}>
@@ -2879,11 +2886,10 @@ export default function App() {
                     </span>
                   </div>
 
-                  {/* Player Chips Display with Avatar & Nationality */}
+                  {/* Player Chips Display with Avatar */}
                   <div className="flex flex-wrap gap-2 min-h-[38px] p-2 rounded-xl border border-white/10 bg-black/40">
                     {partyPlayers.map((player, index) => {
                       const color = PLAYER_COLOR_STYLES[index % PLAYER_COLOR_STYLES.length];
-                      const nationality = detectNameNationality(player);
                       const hasCustom = !!playerCustomPhotos[player.toLowerCase()];
                       const avatarUrl = getRealisticCharacterPhoto(player, '', selectedGenre, playerCustomPhotos);
 
@@ -2916,14 +2922,10 @@ export default function App() {
                               <span className="text-white text-xs">{player}</span>
                               {hasCustom && (
                                 <span className="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded font-mono">
-                                  Custom
+                                  Custom Photo
                                 </span>
                               )}
                             </div>
-                            {/* Nationality indicator matching the name */}
-                            <span className="text-[9px] text-slate-300/80 font-normal">
-                              {nationality.label}
-                            </span>
                           </div>
 
                           <div className="flex items-center gap-1 ml-1">

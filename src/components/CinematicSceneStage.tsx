@@ -24,11 +24,15 @@ import {
 import { soundEngine } from '../utils/soundEngine';
 import {
   getRealisticCharacterPhoto,
-  detectNameNationality,
   compressImageFile,
   setStoredCustomAvatar,
   getStoredCustomAvatars,
 } from '../utils/characterAvatars';
+import {
+  lockOrGetCharacterVisualBible,
+  extractPhysicalSceneAction,
+  buildContinuityPromptBlock,
+} from '../utils/characterConsistency';
 
 export function getDefaultRealisticSceneImage(genre: string, chapter: number): string {
   const ch = Math.min(Math.max(chapter || 1, 1), 3);
@@ -209,6 +213,10 @@ export function CinematicSceneStage({
   const fetchRealisticSceneImage = useCallback(async (forceRegenerate: boolean = false) => {
     setIsGeneratingSceneImage(true);
     try {
+      const visualBible = lockOrGetCharacterVisualBible(cast, genre, localCustomPhotos);
+      const actionDesc = extractPhysicalSceneAction(settingDescription, scriptLines, chapterTitle);
+      const continuityBlock = buildContinuityPromptBlock(visualBible, cast, actionDesc);
+
       const res = await fetch('/api/sceneswap/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -220,13 +228,21 @@ export function CinematicSceneStage({
           chapter_title: chapterTitle,
           type: 'scene',
           aspectRatio: '16:9',
-          cast: cast.map((c) => ({
-            player: c.player,
-            role: c.role,
-            archetype: c.archetype,
-            motivation: c.motivation,
-            nationality: detectNameNationality(c.player).label,
-          })),
+          cast: cast.map((c) => {
+            const locked = visualBible[c.player.toLowerCase().trim()];
+            return {
+              player: c.player,
+              role: c.role,
+              archetype: c.archetype,
+              motivation: c.motivation,
+              wardrobe: locked?.wardrobe,
+              props: locked?.signatureProps,
+              facialFeatures: locked?.facialFeatures,
+              heritagePrompt: locked?.heritagePrompt,
+            };
+          }),
+          characterConsistencyPrompt: continuityBlock,
+          physicalActionPrompt: actionDesc,
           activeSpeaker: currentItem?.speaker,
           activeLine: currentItem?.line,
         }),
@@ -244,7 +260,7 @@ export function CinematicSceneStage({
     } finally {
       setIsGeneratingSceneImage(false);
     }
-  }, [genre, tone, settingDescription, chapterNumber, chapterTitle, cast, currentItem]);
+  }, [genre, tone, settingDescription, chapterNumber, chapterTitle, cast, currentItem, localCustomPhotos, scriptLines]);
 
   // Generate realistic character portraits matching nationality and custom uploads
   const fetchCharacterPortraits = useCallback(() => {
@@ -537,8 +553,8 @@ export function CinematicSceneStage({
                   <span className="text-xs font-black uppercase tracking-wider text-white drop-shadow">
                     {currentCastMember.player}
                   </span>
-                  <span className="text-[9px] font-bold text-emerald-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10">
-                    {detectNameNationality(currentCastMember.player).label}
+                  <span className="text-[9px] font-bold text-amber-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10">
+                    {currentCastMember.archetype}
                   </span>
                 </div>
                 <p className="text-[10px] text-amber-200/90 font-medium italic drop-shadow">
@@ -573,7 +589,7 @@ export function CinematicSceneStage({
                         onLineChange(nextLineIdx);
                       }
                     }}
-                    title={`${member.player} as ${member.role} (${detectNameNationality(member.player).label})`}
+                    title={`${member.player} as ${member.role} (${member.archetype})`}
                     className={`relative h-10 w-10 md:h-12 md:w-12 rounded-xl overflow-hidden border transition-all duration-200 active:scale-95 ${
                       isSpeaking
                         ? `border-amber-400 scale-105 ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)]`

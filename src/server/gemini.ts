@@ -1031,7 +1031,13 @@ export interface RealisticImageRequest {
     archetype?: string;
     motivation?: string;
     secret?: string;
+    wardrobe?: string;
+    props?: string;
+    facialFeatures?: string;
+    heritagePrompt?: string;
   }>;
+  characterConsistencyPrompt?: string;
+  physicalActionPrompt?: string;
   activeSpeaker?: string;
   activeLine?: string;
   character?: {
@@ -1085,20 +1091,51 @@ export async function generateSceneSwapRealisticImage(
 
   const targetAspectRatio = inputs.aspectRatio === '16:9' ? '16:9' : '9:16';
 
-  // Build prominent character staging description inside the scene
+  // Build prominent character staging and consistency description inside the scene
   const castListText = inputs.cast && inputs.cast.length > 0
     ? inputs.cast
-        .map((c) => `Actor "${c.player}" in character as "${c.role}" (${c.motivation ? `motivation: ${c.motivation}` : ''})`)
+        .map((c) => {
+          const wardrobeInfo = c.wardrobe ? ` wearing ${c.wardrobe}` : '';
+          const propsInfo = c.props ? ` carrying/using ${c.props}` : '';
+          const heritageInfo = c.heritagePrompt ? ` [heritage: ${c.heritagePrompt}]` : '';
+          return `Character "${c.player}" as "${c.role}" (${c.archetype || 'Lead'})${heritageInfo}${wardrobeInfo}${propsInfo}`;
+        })
         .join(', ')
     : 'The main ensemble cast members dressed in genre-authentic costumes';
 
   const activeFocusText = inputs.activeSpeaker
-    ? `Featuring ${inputs.activeSpeaker} prominently in the scene action delivering dialogue: "${inputs.activeLine || ''}".`
+    ? `Featuring ${inputs.activeSpeaker} in active mid-scene dialogue: "${inputs.activeLine || ''}".`
     : '';
 
+  const consistencyDirective = inputs.characterConsistencyPrompt
+    ? `\n${inputs.characterConsistencyPrompt}\n`
+    : '';
+
+  const actionDirective = inputs.physicalActionPrompt
+    ? `PHYSICAL ACTION & INTERACTION (GRAPHIC NOVEL / COMIC STYLE): ${inputs.physicalActionPrompt}`
+    : `PHYSICAL ACTION & INTERACTION: The characters are physically inside the setting interacting together and engaging with the environment (e.g. if fight scene, they are in dynamic combat; if confrontation, face-to-face clash; if celebration, raising glasses together).`;
+
   const prompt = targetAspectRatio === '9:16'
-    ? `Cinematic portrait 9:16 vertical film still, TikTok portrait view, photorealistic 8k Arri Alexa cinema capture. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}: "${inputs.chapter_title || ''}". CHARACTERS PROMINENTLY VISIBLE AND ACTIVE INSIDE THE SCENE: ${castListText}. ${activeFocusText} The characters are physically staged inside the environment with expressive acting, authentic cultural and ethnic appearances matching their names, realistic costumes, interacting in the dramatic room. Foreground and midground character presence, volumetric atmospheric lighting, cinematic color grade, photorealistic masterwork, no text, no watermarks, film still.`
-    : `Cinematic wide 16:9 movie still, photorealistic 8k, shot on Arri Alexa 35 with anamorphic lens. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}. CHARACTERS PROMINENTLY VISIBLE INSIDE THE SCENE: ${castListText}. ${activeFocusText} The characters are actively staged in the room, authentic cultural likeness and wardrobe matching their names and roles, realistic cinematic lighting and shadow contrast, cinematic composition. Pristine realism, no text, no watermarks, film still masterpiece.`;
+    ? `Cinematic 9:16 vertical film still, full scene illustration, graphic novel cinematic splash art, 8k Arri Alexa 35 cinema capture. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}: "${inputs.chapter_title || ''}".
+CHARACTERS IN THE SCENE: ${castListText}.
+${activeFocusText}
+${actionDirective}
+${consistencyDirective}
+CRITICAL RULES:
+- Characters MUST be physically drawn inside the environment interacting directly with each other and the setting like a graphic novel frame.
+- NO floating avatars, circular headshots, or separate profile bubbles.
+- Keep character wardrobe, facial look, hair, and props strictly consistent across all scenes.
+- Dynamic camera composition, volumetric lighting, rich color grade, cinematic masterpiece, no text, no captions, no watermarks.`
+    : `Cinematic wide 16:9 movie still, full scene graphic novel frame, 8k Arri Alexa 35 anamorphic lens. Movie Genre: "${genre}". Tone: "${tone}". Scene Setting: "${setting}". Act ${chapterNumber}.
+CHARACTERS IN THE SCENE: ${castListText}.
+${activeFocusText}
+${actionDirective}
+${consistencyDirective}
+CRITICAL RULES:
+- Characters MUST be physically inside the environment interacting together like a graphic novel or film still.
+- NO floating avatars, circular headshots, or isolated portrait cards.
+- Keep character wardrobe, facial look, hair, and props strictly consistent across all scenes.
+- Masterful composition, dramatic lighting, no text, no watermarks, cinematic film still.`;
 
   const ai = getGeminiClient();
   const isCooldown = Date.now() < imageQuotaCooldownUntil;

@@ -28,11 +28,15 @@ import {
 import { soundEngine } from '../utils/soundEngine';
 import {
   getRealisticCharacterPhoto,
-  detectNameNationality,
   compressImageFile,
   setStoredCustomAvatar,
   getStoredCustomAvatars,
 } from '../utils/characterAvatars';
+import {
+  lockOrGetCharacterVisualBible,
+  extractPhysicalSceneAction,
+  buildContinuityPromptBlock,
+} from '../utils/characterConsistency';
 import {
   getDefaultRealisticSceneImage,
   CastMember,
@@ -190,6 +194,10 @@ export function StudioScriptPortraitView({
   const handleRegenerateScene = async () => {
     setIsGeneratingSceneImage(true);
     try {
+      const visualBible = lockOrGetCharacterVisualBible(cast, genre, localCustomPhotos);
+      const actionDesc = extractPhysicalSceneAction(settingDescription, scriptLines, chapterTitle);
+      const continuityBlock = buildContinuityPromptBlock(visualBible, cast, actionDesc);
+
       const res = await fetch('/api/sceneswap/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -201,13 +209,21 @@ export function StudioScriptPortraitView({
           chapter_title: chapterTitle,
           type: 'scene',
           aspectRatio: '9:16',
-          cast: cast.map((c) => ({
-            player: c.player,
-            role: c.role,
-            archetype: c.archetype,
-            motivation: c.motivation,
-            nationality: detectNameNationality(c.player).label,
-          })),
+          cast: cast.map((c) => {
+            const locked = visualBible[c.player.toLowerCase().trim()];
+            return {
+              player: c.player,
+              role: c.role,
+              archetype: c.archetype,
+              motivation: c.motivation,
+              wardrobe: locked?.wardrobe,
+              props: locked?.signatureProps,
+              facialFeatures: locked?.facialFeatures,
+              heritagePrompt: locked?.heritagePrompt,
+            };
+          }),
+          characterConsistencyPrompt: continuityBlock,
+          physicalActionPrompt: actionDesc,
           activeSpeaker: currentItem?.speaker,
           activeLine: currentItem?.line,
         }),
@@ -328,7 +344,7 @@ export function StudioScriptPortraitView({
 
   // Copy Director's Cut
   const handleCopyDirectorsCut = () => {
-    const text = `🎬 [SCENESWAP DIRECTORS CUT - ACT ${chapterNumber}: ${chapterTitle}]\nGenre: ${genre} | Tone: ${tone}\nSetting: ${settingDescription}\n\nCAST ROLES:\n${cast.map((c) => `- ${c.player} as ${c.role} (${c.archetype}) [${detectNameNationality(c.player).label}]`).join('\n')}\n\nSCENE SCRIPT:\n${scriptLines.map((l) => `${l.speaker.toUpperCase()} ${l.direction ? `(${l.direction}) ` : ''}: "${l.line}"`).join('\n\n')}\n\n${isFinale ? `GRAND FINALE: ${finaleSummary || ''}` : `CHOICES:\n${plotChoices.map((p) => `[${p.id}] ${p.label}: ${p.description}`).join('\n')}`}`;
+    const text = `🎬 [SCENESWAP DIRECTORS CUT - ACT ${chapterNumber}: ${chapterTitle}]\nGenre: ${genre} | Tone: ${tone}\nSetting: ${settingDescription}\n\nCAST ROLES:\n${cast.map((c) => `- ${c.player} as ${c.role} (${c.archetype})`).join('\n')}\n\nSCENE SCRIPT:\n${scriptLines.map((l) => `${l.speaker.toUpperCase()} ${l.direction ? `(${l.direction}) ` : ''}: "${l.line}"`).join('\n\n')}\n\n${isFinale ? `GRAND FINALE: ${finaleSummary || ''}` : `CHOICES:\n${plotChoices.map((p) => `[${p.id}] ${p.label}: ${p.description}`).join('\n')}`}`;
 
     navigator.clipboard.writeText(text);
     setCopiedCut(true);
@@ -639,140 +655,17 @@ export function StudioScriptPortraitView({
           </div>
 
           {/* =========================================================================
-              CHARACTERS IN THE SCENE: CINEMATIC STAGING DIRECTLY INSIDE THE ROOM
+              OPEN SCENE VIEW: CHARACTERS ARE SHOWN DRAWN/ACTING DIRECTLY INSIDE THE ARTWORK
               ========================================================================= */}
-          <div className="my-auto py-2 flex flex-col items-center justify-center pointer-events-auto">
-            {/* Active Spotlight Speaker Character Inside the Scene */}
-            {currentCastMember && (
-              <div className="flex flex-col items-center text-center animate-in zoom-in-95 duration-300 max-w-[280px]">
-                <div className="relative group">
-                  {/* Dramatic Cinematic Aura Ring */}
-                  <div className="absolute -inset-2.5 rounded-full bg-gradient-to-r from-amber-500/35 to-purple-500/35 blur-md animate-pulse pointer-events-none" />
-
-                  {/* Character Avatar with Camera Button to upload their own photo */}
-                  <div
-                    className={`relative h-24 w-24 sm:h-28 sm:w-28 rounded-full overflow-hidden border-3 ${currentStyle.border} shadow-[0_0_30px_rgba(0,0,0,0.9)] ring-4 ring-amber-400/50 bg-slate-950 transition`}
-                  >
-                    <img
-                      src={
-                        characterPortraits[currentCastMember.player.toLowerCase()] ||
-                        getRealisticCharacterPhoto(currentCastMember.player, currentCastMember.role, genre, localCustomPhotos)
-                      }
-                      alt={currentCastMember.player}
-                      className="h-full w-full object-cover object-top filter brightness-105"
-                    />
-
-                    {/* Live Speaking Indicator */}
-                    <div className="absolute top-1.5 right-1.5 flex h-3.5 w-3.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 ring-1 ring-white" />
-                    </div>
-
-                    {/* Button for players to upload their own photo */}
-                    <button
-                      type="button"
-                      onClick={() => triggerUploadFor(currentCastMember.player)}
-                      title="Upload your own photo as avatar"
-                      className="absolute inset-x-0 bottom-0 bg-black/85 hover:bg-amber-600/90 py-1 flex items-center justify-center gap-1 text-[9px] font-bold text-white transition cursor-pointer"
-                    >
-                      <Camera className="h-2.5 w-2.5 text-amber-300" />
-                      <span>{localCustomPhotos[currentCastMember.player.toLowerCase()] ? 'Change Photo' : 'Upload Photo'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Speaker Identity, Role & Nationality Details */}
-                <div className="mt-2 space-y-0.5">
-                  <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                    <span className="text-sm font-black text-white drop-shadow-md uppercase tracking-wide">
-                      {currentCastMember.player}
-                    </span>
-                    <span className="rounded bg-black/80 border border-white/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-300">
-                      {currentCastMember.role}
-                    </span>
-                  </div>
-
-                  {/* Nationality matched to character name */}
-                  <div className="flex items-center justify-center gap-1 text-[9px] text-slate-300 drop-shadow">
-                    <span className="text-slate-400">Nationality:</span>
-                    <span className="font-semibold text-emerald-300">
-                      {detectNameNationality(currentCastMember.player).label}
-                    </span>
-                    {localCustomPhotos[currentCastMember.player.toLowerCase()] && (
-                      <span className="bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded text-[8px] font-mono">
-                        Custom Photo Active
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-[10px] text-amber-200/90 italic font-medium drop-shadow line-clamp-1">
-                    &ldquo;{currentCastMember.motivation}&rdquo;
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Other Characters Staged in the Scene (Lineup inside room) */}
-            <div className="mt-3 flex items-center justify-center gap-2 flex-wrap bg-black/70 p-2 rounded-2xl border border-white/10 backdrop-blur-md max-w-[95%]">
-              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 pr-1">
-                Scene Cast:
-              </span>
-              {cast.map((member, i) => {
-                const isSpeaking = member.player.toLowerCase() === currentItem?.speaker.toLowerCase();
-                const color = playerColorStyles[i % playerColorStyles.length];
-                const nationality = detectNameNationality(member.player);
-                const photo = characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre, localCustomPhotos);
-
-                return (
-                  <div
-                    key={i}
-                    className={`relative group flex flex-col items-center cursor-pointer transition ${
-                      isSpeaking ? 'scale-105' : 'opacity-75 hover:opacity-100'
-                    }`}
-                    onClick={() => {
-                      const idx = scriptLines.findIndex((l) => l.speaker.toLowerCase() === member.player.toLowerCase());
-                      if (idx >= 0) onLineChange(idx);
-                    }}
-                  >
-                    <div
-                      className={`relative h-10 w-10 sm:h-11 sm:w-11 rounded-xl overflow-hidden border-2 transition ${
-                        isSpeaking
-                          ? `${color.border} ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]`
-                          : 'border-white/20'
-                      }`}
-                    >
-                      <img src={photo} alt={member.player} className="h-full w-full object-cover object-top" />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerUploadFor(member.player);
-                        }}
-                        title={`Upload custom photo for ${member.player}`}
-                        className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center transition"
-                      >
-                        <Camera className="h-3 w-3 text-white" />
-                      </button>
-                    </div>
-                    <span className="text-[8px] font-bold text-white max-w-[48px] truncate mt-0.5">
-                      {member.player}
-                    </span>
-                    <span className="text-[7px] text-emerald-300 font-mono">
-                      {nationality.region}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <div className="flex-1 my-auto pointer-events-none" />
 
           {/* Floating Cast Members Drawer if toggled */}
           {showCastDrawer && (
-            <div className="mb-3 rounded-2xl border border-white/20 bg-black/90 p-3 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[85%]">
+            <div className="mb-3 rounded-2xl border border-white/20 bg-black/90 p-3 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-[85%] z-30">
               <div className="flex items-center justify-between mb-2 pb-1 border-b border-white/10">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1">
                   <Users className="h-3 w-3" />
-                  Active Cast Dossier & Nationalities
+                  Cast Dossier & Characters
                 </span>
                 <button
                   type="button"
@@ -785,24 +678,22 @@ export function StudioScriptPortraitView({
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                 {cast.map((member, i) => {
                   const style = playerColorStyles[i % playerColorStyles.length];
-                  const nationality = detectNameNationality(member.player);
                   return (
                     <div key={i} className={`p-1.5 rounded-lg border ${style.border} ${style.bg} text-[10px]`}>
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white">{member.player}</span>
-                        <span className={style.text}>{member.role}</span>
+                        <span className={style.text}>{member.role} ({member.archetype})</span>
                       </div>
-                      <div className="text-[9px] text-emerald-300 flex items-center justify-between mt-0.5">
-                        <span>Heritage: {nationality.label}</span>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-slate-300 italic text-[9px] truncate max-w-[180px]">&ldquo;{member.motivation}&rdquo;</p>
                         <button
                           type="button"
                           onClick={() => triggerUploadFor(member.player)}
-                          className="text-amber-300 underline text-[8px]"
+                          className="text-amber-300 hover:text-amber-200 underline text-[9px] shrink-0 ml-2"
                         >
                           📷 Change Photo
                         </button>
                       </div>
-                      <p className="text-slate-300 italic text-[9px] mt-0.5">&ldquo;{member.motivation}&rdquo;</p>
                       {member.secret && (
                         <p className="text-amber-300 text-[8px] mt-0.5">🔒 {member.secret}</p>
                       )}
@@ -951,18 +842,17 @@ export function StudioScriptPortraitView({
             </div>
           </div>
 
-          {/* Cast Roles Badges Strip with Nationality & Photo Upload */}
+          {/* Cast Roles Badges Strip with Photo Upload */}
           <div className="rounded-xl border border-white/10 bg-black/60 p-3 backdrop-blur-md">
             <div className="flex items-center justify-between mb-2">
               <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
                 <Users className="h-3 w-3 text-indigo-400" />
-                Cast Roles, Nationalities & Photos ({cast.length} Actors)
+                Cast Roles & Character Roster ({cast.length} Actors)
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {cast.map((member, i) => {
                 const color = playerColorStyles[i % playerColorStyles.length];
-                const nationality = detectNameNationality(member.player);
                 const photo = characterPortraits[member.player.toLowerCase()] || getRealisticCharacterPhoto(member.player, member.role, genre, localCustomPhotos);
 
                 return (
@@ -984,12 +874,11 @@ export function StudioScriptPortraitView({
                           <span className={`h-1.5 w-1.5 rounded-full ${color.text}`} />
                           {member.player}
                         </span>
-                        <span className={`text-[10px] font-medium ${color.text}`}>{member.role}</span>
+                        <span className={`text-[10px] font-medium ${color.text}`}>{member.role} ({member.archetype})</span>
                       </div>
                       <div className="flex items-center gap-1 text-[9px] text-emerald-300">
-                        <span>{nationality.label}</span>
                         {localCustomPhotos[member.player.toLowerCase()] && (
-                          <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1 rounded">Custom</span>
+                          <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1 rounded">Custom Photo</span>
                         )}
                       </div>
                       <p className="text-[10px] text-slate-300 mt-0.5 italic truncate">
