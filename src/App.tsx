@@ -1961,6 +1961,40 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* View Switcher: AlterEgo RPG vs SceneSwap Studio */}
+                <div className="flex rounded-xl border border-white/15 bg-white/10 p-0.5 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView('alterego');
+                      soundEngine.playDialogueBlip(1.0);
+                    }}
+                    className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold transition ${
+                      view === 'alterego'
+                        ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Compass className="h-3 w-3" />
+                    <span>AlterEgo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView('sceneswap');
+                      soundEngine.playDialogueBlip(1.2);
+                    }}
+                    className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold transition ${
+                      view === 'sceneswap'
+                        ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Clapperboard className="h-3 w-3" />
+                    <span>SceneSwap</span>
+                  </button>
+                </div>
+
                 {/* PWA Install Button */}
                 <PWAInstallButton />
 
